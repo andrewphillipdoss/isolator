@@ -102,9 +102,13 @@ def oneshot_attack(data: np.ndarray, sr: int) -> int:
     return refine_onset(data, first, sr, back_ms=5, fwd_ms=3)
 
 
-def load_oneshot(path: Path, sr: int) -> OneShot:
+def load_oneshot(path: Path, sr: int) -> OneShot | None:
+    """One sample, peak-normalized. None for a digitally silent file (it would otherwise
+    pose as a 0 dBFS sample and make some loud hits trigger silence)."""
     a = load(path, sr=sr, stereo=True)
-    peak = float(np.max(np.abs(a.data))) or 1.0
+    peak = float(np.max(np.abs(a.data))) if a.data.size else 0.0
+    if peak <= 1e-6:
+        return None
     data = (a.data / peak).astype(np.float32)
     return OneShot(data=data, attack=oneshot_attack(data, sr), level_db=20 * np.log10(peak), name=path.name)
 
@@ -131,19 +135,29 @@ def load_kit_folder(path: str | Path, sr: int) -> Kit:
         if not files:
             continue
         name = d.name.lower()
-        shots = {f: load_oneshot(f, sr) for f in files}
+        shots = {f: s for f in files if (s := load_oneshot(f, sr)) is not None}
+        if not shots:
+            continue
         groups: dict[str, list[OneShot]] = {}
         for f, shot in shots.items():
             groups.setdefault(f.name.split("__", 1)[0] if "__" in f.name else "", []).append(shot)
-        piece = KitPiece(name, _layers_by_loudness(list(shots.values())))
-        if len(groups) > 1:
+        if len(groups) > 1 and name == "toms":
+            def pitch(kp: KitPiece) -> float:
+                loud = kp.layers[-1][0]
+                return hit_pitch(loud.data, loud.attack, sr)
+
             variants = [KitPiece(f"{name}:{g}", _layers_by_loudness(v)) for g, v in groups.items()]
-            if name == "toms":
-                def pitch(kp: KitPiece) -> float:
-                    loud = kp.layers[-1][0]
-                    return hit_pitch(loud.data, loud.attack, sr)
-                variants.sort(key=lambda kp: -np.nan_to_num(pitch(kp), nan=0.0))
-            piece.variants = variants
+            variants.sort(key=lambda kp: -np.nan_to_num(pitch(kp), nan=0.0))
+            piece = KitPiece(name, _layers_by_loudness(list(shots.values())), variants)
+        elif len(groups) > 1:
+            # Two different drums in one piece (two snares, kick-in + kick-sub):
+            # alternating between them as round robins would sound like two
+            # drummers. Use the group with the most samples; to use another,
+            # keep only that one's files in the folder.
+            g = max(groups, key=lambda k: (len(groups[k]), k))
+            piece = KitPiece(f"{name}:{g}", _layers_by_loudness(groups[g]))
+        else:
+            piece = KitPiece(name, _layers_by_loudness(list(shots.values())))
         kit.pieces[name] = piece
     return kit
 

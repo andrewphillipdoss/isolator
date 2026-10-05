@@ -79,20 +79,47 @@ def test_sfz_import_renders_layers_and_round_robins(tmp_path):
 
     pytest.importorskip("pysfizz")
     from iso.kits import import_sfz
+    from iso.toms import hit_pitch
 
     (tmp_path / "s").mkdir()
     lines = []
-    for vi, (lo, hi, g) in enumerate(((1, 64, 0.3), (65, 127, 1.0))):
+    # Each band has its own pitch, so we can tell which sample got rendered.
+    band_pitch = {0: 100.0, 1: 200.0}
+    for vi, (lo, hi) in enumerate(((1, 64), (65, 127))):
         for rr in (1, 2):
             fn = f"s/k_{vi}_{rr}.wav"
-            sf.write(tmp_path / fn, (g * kick(seed=vi * 10 + rr)).astype(np.float32), SR)
+            sf.write(tmp_path / fn, tom(band_pitch[vi], seed=vi * 10 + rr).astype(np.float32), SR)
             lines.append(f"<region> sample={fn} key=36 lovel={lo} hivel={hi} seq_length=2 seq_position={rr}")
         fn = f"s/t_{vi}.wav"
-        sf.write(tmp_path / fn, (g * tom(140)).astype(np.float32), SR)
+        sf.write(tmp_path / fn, tom(140).astype(np.float32), SR)
         lines.append(f"<region> sample={fn} key=45 lovel={lo} hivel={hi}")
     (tmp_path / "kit.sfz").write_text("\n".join(lines) + "\n")
     copied = import_sfz(tmp_path / "kit.sfz", tmp_path / "out")
     assert len(copied["kick"]) == 4  # 2 layers x 2 round robins
-    assert len(copied["toms"]) == 2 and all(f.startswith("tom_1__") for f in copied["toms"])
+    pitches = sorted(hit_pitch(sf.read(tmp_path / "out" / "kick" / f, always_2d=True)[0].T, 0, SR) for f in copied["kick"])
+    # Two samples from the ~100 Hz band and two from the ~200 Hz band: no band lost.
+    assert max(pitches[:2]) < 150 < min(pitches[2:]), pitches
+    assert all(f.startswith("kit_k45__") for f in copied["toms"])
+
+    # A second SFZ imported into the same kit adds to it instead of overwriting.
+    (tmp_path / "Tom 2.sfz").write_text(f"<region> sample=s/t_0.wav key=45\n")
+    import_sfz(tmp_path / "Tom 2.sfz", tmp_path / "out")
     k = load_kit_folder(tmp_path / "out", SR)
+    assert len(k.pieces["toms"].variants) == 2
     assert len(k.pieces["kick"].layers) == 2 and all(len(layer) == 2 for layer in k.pieces["kick"].layers)
+
+
+def test_two_different_drums_in_one_piece_do_not_alternate(tmp_path):
+    for group, f0 in (("snare_a", 180.0), ("snare_b", 260.0)):
+        d = tmp_path / "kit" / "snare"
+        d.mkdir(parents=True, exist_ok=True)
+        n = 3 if group == "snare_a" else 2
+        for i in range(n):
+            sf.write(d / f"{group}__{i}.wav", tom(f0, seed=i).astype(np.float32), SR)
+    (tmp_path / "kit" / "kick").mkdir()
+    sf.write(tmp_path / "kit" / "kick" / "silent.wav", np.zeros(4410, dtype=np.float32), SR)
+    sf.write(tmp_path / "kit" / "kick" / "real.wav", kick().astype(np.float32), SR)
+    k = load_kit_folder(tmp_path / "kit", SR)
+    names = {s.name for layer in k.pieces["snare"].layers for s in layer}
+    assert names and all(n.startswith("snare_a__") for n in names)  # one drum: the larger group
+    assert [s.name for layer in k.pieces["kick"].layers for s in layer] == ["real.wav"]  # silent file skipped

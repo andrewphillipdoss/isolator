@@ -147,7 +147,10 @@ def import_sfz(sfz: str | Path, out_dir: str | Path, keys: dict[int, str] | None
         raise ValueError(f"sfizz could not load {sfz}")
     out_dir = Path(out_dir)
     copied: dict[str, list[str]] = {}
-    toms_seen = sorted(k for k, p in keys.items() if p == "toms" and synth.get_note_info(k))
+    # Tags include the SFZ's own name, so importing "Kick In.sfz", "Tom 1.sfz",
+    # "Tom 2.sfz" one by one into the same kit never overwrites anything.
+    # Toms get ordered by pitch at load time, so no tom numbering is needed here.
+    src_tag = re.sub(r"[^\w]+", "_", Path(sfz).stem).strip("_").lower() or "sfz"
     for key, piece in keys.items():
         try:
             regions = synth.get_note_info(key)
@@ -159,11 +162,15 @@ def import_sfz(sfz: str | Path, out_dir: str | Path, keys: dict[int, str] | None
         per_band = {b: sum(1 for r in regions if (r["lovel"], r["hivel"]) == b) for b in bands}
         dest = out_dir / piece
         dest.mkdir(parents=True, exist_ok=True)
-        tag = f"tom_{toms_seen.index(key) + 1}" if piece == "toms" else f"key{key}"
+        tag = f"{src_tag}_k{key}"
         seen: set[str] = set()
         for (lo, hi), n in per_band.items():
+            # sfizz reports each band's top as exclusive (playing `hi` picked the
+            # next band up), so play the top velocity *inside* the band: loud
+            # enough to be representative, and still this band's sample.
+            vel = int(min(127, max(lo, hi - 1)))
             for _ in range(2 * n):  # round robins cycle inside sfizz; render each one at least once
-                y = np.asarray(synth.render_note(key, hi, 0.05, 4.0), dtype=np.float32)
+                y = np.asarray(synth.render_note(key, vel, 0.05, 4.0), dtype=np.float32)
                 audible = np.nonzero(np.abs(y).max(axis=0) > 1e-5)[0]
                 if audible.size == 0:
                     continue
@@ -172,7 +179,7 @@ def import_sfz(sfz: str | Path, out_dir: str | Path, keys: dict[int, str] | None
                 if h in seen:
                     continue
                 seen.add(h)
-                name = f"{tag}__v{hi:03d}_{len(seen):02d}.wav"
+                name = f"{tag}__v{vel:03d}_{len(seen):02d}.wav"
                 sf.write(dest / name, y.T, sr, subtype="FLOAT")
                 copied.setdefault(piece, []).append(name)
     return copied
