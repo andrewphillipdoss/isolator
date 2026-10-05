@@ -47,6 +47,7 @@ MODELS: dict[str, ModelSpec] = {
         ("bass", "drums", "other", "vocals", "guitar", "piano"),
         "Best public drums model (~14.1 dB SDR, MVSep Multisong). Has a guitar stem, which helps on rock.",
         ckpt_size=699412152,
+        sha256="24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e",
     ),
     "scnet_xl_ihf": ModelSpec(
         "scnet",
@@ -71,6 +72,8 @@ MODELS: dict[str, ModelSpec] = {
         f"{NOMAD}/MDX23C-De-Reverb-aufr33-jarredou.ckpt",
         ("dry", "no dry"),
         "General-purpose (not vocal-only) dereverb by aufr33 & jarredou.",
+        ckpt_size=448098867,
+        sha256="eae2471b707758d74db38ac1b1d5800e12f57c4e9d1ebbb2faf004b8e086e914",
     ),
     # Drums -> pieces
     "drumsep_5": ModelSpec(
@@ -79,6 +82,8 @@ MODELS: dict[str, ModelSpec] = {
         f"https://media.githubusercontent.com/media/{DRUM2MIDI}/drumsep_5stems_mdx23c_jarredou.ckpt",
         ("kick", "snare", "toms", "hh", "cymbals"),
         "jarredou 5-stem DrumSep: best public piece SDR (kick 16.7, snare 11.5, toms 12.3).",
+        ckpt_size=437648758,
+        sha256="1f8e636fb674b88a52c8399fde9a4ebe2b72b065ca07eed4e03ab1c9f0bfb2e0",
     ),
     "drumsep_6": ModelSpec(
         "mdx23c",
@@ -87,6 +92,7 @@ MODELS: dict[str, ModelSpec] = {
         ("kick", "snare", "toms", "hh", "ride", "crash"),
         "aufr33 & jarredou 6-stem DrumSep. Iso uses it mainly to split cymbals into ride and crash.",
         ckpt_size=437652699,
+        sha256="d2a4aa53eb584d21eead358a4e66d1882ad182911be018f052b5da73be9096d0",
     ),
 }
 

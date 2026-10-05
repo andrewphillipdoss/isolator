@@ -19,8 +19,10 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+import hmac
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .layers import LayerTrack, load_session, mixdown, save_session, write_reaper_project
@@ -36,7 +38,7 @@ def _safe_name(name: str) -> str:
     return name
 
 
-def create_app(out_root: Path, backend_factory: Callable, kits_root: Path | None = None) -> FastAPI:
+def create_app(out_root: Path, backend_factory: Callable, kits_root: Path | None = None, token: str | None = None) -> FastAPI:
     out_root.mkdir(parents=True, exist_ok=True)
     uploads = out_root / ".uploads"
     uploads.mkdir(exist_ok=True)
@@ -70,6 +72,18 @@ def create_app(out_root: Path, backend_factory: Callable, kits_root: Path | None
 
     threading.Thread(target=worker, daemon=True).start()
     app = FastAPI(title="Iso")
+
+    if token:
+        # Open the page once as /?token=...; a cookie carries it from then on.
+        @app.middleware("http")
+        async def require_token(request: Request, call_next):
+            given = request.query_params.get("token") or request.cookies.get("iso_token") or ""
+            if not hmac.compare_digest(given, token):
+                return PlainTextResponse("Iso: add ?token=... to the URL", status_code=401)
+            response = await call_next(request)
+            if request.query_params.get("token"):
+                response.set_cookie("iso_token", token, httponly=True, samesite="strict")
+            return response
 
     @app.get("/api/presets")
     def presets():
@@ -139,7 +153,7 @@ def create_app(out_root: Path, backend_factory: Callable, kits_root: Path | None
         tracks = list(by_name.values())
         save_session(d / "session.json", tracks, sr)
         report = json.loads((d / "report.json").read_text())
-        write_reaper_project(d / "layer_kit.rpp", tracks, sr, report["seconds"])
+        write_reaper_project(d / "layer_kit.rpp", tracks, sr, report["seconds"], midi_file=report.get("midi"), bpm=report.get("bpm"))
         return {"ok": True}
 
     @app.post("/api/kits/{name}/bounce")
@@ -176,11 +190,11 @@ def create_app(out_root: Path, backend_factory: Callable, kits_root: Path | None
     return app
 
 
-def serve(host: str, port: int, out_root: Path, backend_factory: Callable) -> None:
+def serve(host: str, port: int, out_root: Path, backend_factory: Callable, token: str | None = None) -> None:
     import uvicorn
 
-    app = create_app(out_root, backend_factory)
-    print(f"Iso is running at http://{host}:{port}")
+    app = create_app(out_root, backend_factory, token=token)
+    print(f"Iso is running at http://{host}:{port}" + (f"/?token={token}" if token else ""))
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

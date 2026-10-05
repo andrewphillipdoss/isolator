@@ -46,11 +46,35 @@ class MSSTBackend:
     tta: bool = False  # polarity + channel-swap test-time augmentation (about 3x slower)
     overlap: int | None = None  # None = each model's own default
     force_cpu: bool = False
+    keep_loaded: int = 1  # models held in memory at once; 1 keeps 8-16 GB machines comfortable
     _seps: dict = field(default_factory=dict, repr=False)
+
+    def _free(self) -> None:
+        while len(self._seps) >= max(1, self.keep_loaded):
+            old = self._seps.pop(next(iter(self._seps)))
+            try:
+                old.close()
+            except Exception:
+                pass
+            del old
+        try:
+            import gc
+
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        except Exception:
+            pass
 
     def _separator(self, name: str):
         if name not in self._seps:
             import msst
+
+            self._free()
 
             from .models import config_with_overlap, ensure_model
 

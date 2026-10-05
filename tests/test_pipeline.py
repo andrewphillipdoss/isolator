@@ -169,3 +169,26 @@ def test_estimate_bpm():
     times = [i * 0.5 for i in range(32)]  # 120 BPM quarter notes
     assert abs(estimate_bpm(times) - 120) < 1.0
     assert estimate_bpm([0.1, 0.2]) == 120.0  # too few hits -> default
+
+
+def test_quality_checks_and_mix_ref(tmp_path):
+    song, mix = make_song(tmp_path)
+    rep = run(song, tmp_path / "out", FakeBackend(), Config(piece_models=["drumsep_6"]))
+    qc = rep["qc"]
+    assert qc["all_same_length"] and qc["finite"]
+    assert qc["drums_plus_rest_error_db"] < -100 and qc["dry_plus_room_error_db"] < -100
+    ref, _ = read(tmp_path / "out" / rep["files"]["mix_ref"])
+    np.testing.assert_allclose(ref, mix, atol=1e-5)
+    rpp = (tmp_path / "out" / "layer_kit.rpp").read_text()
+    assert "<SOURCE MIDI" in rpp and rep["midi"] in rpp
+
+
+def test_ui_token_guard(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from iso.server import create_app
+
+    c = TestClient(create_app(tmp_path / "o", lambda cfg: None, token="s3cret"))
+    assert c.get("/api/kits").status_code == 401
+    assert c.get("/api/kits?token=s3cret").status_code == 200
+    assert c.get("/api/kits").status_code == 200  # cookie set by the first good request

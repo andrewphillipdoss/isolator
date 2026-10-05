@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -44,6 +44,7 @@ class Config:
     tta: bool = False  # polarity + channel-swap test-time augmentation, about 3x slower
     overlap: int | None = None  # separation overlap; None = each model's default
     gate: bool = True
+    gate_floor_db: float = -30.0  # level between hits on gated pieces; a missed hit stays faintly audible
     leakage_filter: bool = True
     buried_db: float = 30.0  # a hit this far under the whole kit at that instant is leakage, not playing
     kit: str | None = None  # folder of one-shots for trigger layers
@@ -56,9 +57,10 @@ class Config:
 PRESETS: dict[str, Config] = {
     # One model per stage, no TTA. Good for auditioning on a laptop CPU.
     "fast": Config(dereverb_model="dereverb_mdx23c", piece_models=["drumsep_6"]),
-    # The default: best single drum model with TTA, plus both piece models.
-    "best": Config(tta=True),
-    # Adds SCNet-XL (sharper attacks) to the drum ensemble and blends both piece models.
+    # The default: best single drum model, both piece models. TTA only buys
+    # ~0.1 dB for 3x the compute, so it's saved for "max".
+    "best": Config(),
+    # Adds SCNet-XL (sharper attacks) to the drum ensemble, blends both piece models, TTA on.
     "max": Config(
         drum_models=["bs_roformer_sw", "scnet_xl_ihf"],
         drum_weights=[3.0, 1.0],
@@ -83,6 +85,7 @@ FILE_NAMES = {
     "room": "21_room",
     "drums_full": "22_drums_full",
     "no_drums": "30_no_drums",
+    "mix_ref": "00_mix_ref",
 }
 
 
@@ -139,6 +142,27 @@ def _separate_pieces(backend: Backend, x: np.ndarray, cfg: Config, sr: int) -> d
     return out
 
 
+def quality_checks(mix: np.ndarray, stems: dict, piece_src: np.ndarray, pieces: dict, sr: int) -> dict:
+    """Automatic checks that the layer kit is sound. All should pass on every song."""
+
+    def db(x: np.ndarray) -> float:
+        return round(float(10 * np.log10(np.mean(np.asarray(x, dtype=np.float64) ** 2) + 1e-20)), 1)
+
+    n = mix.shape[-1]
+    out: dict = {
+        "all_same_length": all(x.shape[-1] == n for x in stems.values()),
+        "finite": all(bool(np.isfinite(x).all()) for x in stems.values()),
+        "drums_plus_rest_error_db": db(stems["drums_full"] + stems["no_drums"] - mix),
+    }
+    if "room" in stems:
+        out["dry_plus_room_error_db"] = db(stems["drums_dry"] + stems["room"] - stems["drums_full"])
+    if pieces:
+        residual = piece_src - sum(pieces.values())
+        out["pieces_residual_below_kit_db"] = round(db(piece_src) - db(residual), 1)  # higher is better; >= 30 is healthy
+    out["piece_level_db"] = {p: db(x) for p, x in pieces.items()}
+    return out
+
+
 def _guard(ref: np.ndarray, est: np.ndarray, name: str, lags: dict) -> tuple[np.ndarray, dict]:
     est, lag = realign(ref, est)
     if lag:
@@ -176,6 +200,10 @@ def run(
     drums_full, first_lag = _guard(mix.data, drums_full, "drums_full", {})
     stems["drums_full"] = drums_full
     stems["no_drums"] = (mix.data - drums_full).astype(np.float32)
+    # The decoded song every stem was derived from. Line things up against
+    # this, never against the original MP3: decoders pad MP3s differently
+    # (up to 1105 samples).
+    stems["mix_ref"] = mix.data
 
     lags: dict = dict(first_lag)
     if cfg.dereverb_model:
@@ -204,7 +232,8 @@ def run(
     for p, x in raw_pieces.items():
         save(out / "extras" / f"raw_{p}.wav", Audio(resample(x, sr, out_sr), out_sr))
         if cfg.gate and p in PIECE_GATES:
-            stems[p] = hit_gate(x, sr, [h.sample for h in hits[p]], PIECE_GATES[p])
+            gp = replace(PIECE_GATES[p], floor_db=cfg.gate_floor_db)
+            stems[p] = hit_gate(x, sr, [h.sample for h in hits[p]], gp)
         else:
             stems[p] = x
     residual = piece_src - sum(raw_pieces.values())
@@ -258,7 +287,9 @@ def run(
 
     session = default_session(files)
     save_session(out / "session.json", session, out_sr)
-    write_reaper_project(out / "layer_kit.rpp", session, out_sr, n / sr)
+    write_reaper_project(out / "layer_kit.rpp", session, out_sr, n / sr, midi_file=midi_name, bpm=bpm)
+
+    qc = quality_checks(mix.data, stems, piece_src, raw_pieces, sr)
 
     report = {
         "iso_version": __version__,
@@ -272,6 +303,7 @@ def run(
         "toms_found": (max(tom_idx) + 1) if tom_idx else 0,
         "hihat_open": len(midi_hits.get("hihat_open", [])),
         "realigned_samples": lags,  # should stay empty; non-zero means a model output was shifted
+        "qc": qc,
         "triggers": trigger_reports,
         "files": files,
         "elapsed_s": round(time.time() - t0, 1),

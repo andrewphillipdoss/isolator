@@ -32,6 +32,7 @@ def cmd_split(args) -> int:
         pieces_from=args.pieces_from or cfg.pieces_from,
         overlap=args.overlap if args.overlap is not None else cfg.overlap,
         tta=cfg.tta and not args.no_tta,
+        gate_floor_db=args.gate_floor,
     )
     backend = make_backend(args.models_dir, cfg.tta, cfg.overlap, args.cpu)
     for song in args.songs:
@@ -92,6 +93,7 @@ def cmd_serve(args) -> int:
         port=args.port,
         out_root=Path(args.out),
         backend_factory=lambda cfg: make_backend(args.models_dir, cfg.tta, cfg.overlap, args.cpu),
+        token=args.token,
     )
     return 0
 
@@ -200,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-tta", action="store_true", help="skip test-time augmentation (3x faster, slightly worse)")
     s.add_argument("--kit", help="folder of one-shots for trigger layers (kit/kick/*.wav, kit/snare/*.wav, ...)")
     s.add_argument("--no-gate", action="store_true", help="skip hit-keyed gating of kick/snare/toms")
+    s.add_argument("--gate-floor", type=float, default=-30.0, help="dB between hits on gated pieces (-60 = cleanest, -12 = gentle)")
     s.add_argument("--pieces-from", choices=["dry", "full"], help="split pieces from the dry kit or the full kit")
     s.add_argument("--bpm", type=float, help="tempo for the MIDI file (default: estimated)")
     s.add_argument("--dynamics", type=float, default=1.0, help="trigger dynamics: 1 = follow the drummer, 0 = even")
@@ -229,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8765)
     v.add_argument("-o", "--out", default=str(DEFAULT_OUT))
+    v.add_argument("--token", help="require ?token=... (use whenever the UI is reachable from outside, e.g. a tunnel)")
     v.set_defaults(fn=cmd_serve)
 
     k = sub.add_parser("kit", help="manage trigger kits")

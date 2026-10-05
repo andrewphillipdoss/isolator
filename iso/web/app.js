@@ -29,7 +29,8 @@ let saveTimer = null;
 
 function audio() {
   if (!ctx) {
-    ctx = new AudioContext({ latencyHint: "playback" });
+    // 44.1 kHz keeps a dozen decoded 4-minute stems around 1 GB instead of more at 48k.
+    ctx = new AudioContext({ latencyHint: "playback", sampleRate: 44100 });
     master = ctx.createGain();
     master.gain.value = dbToGain(parseFloat($("master").value));
     master.connect(ctx.destination);

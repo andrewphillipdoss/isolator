@@ -89,6 +89,7 @@ DEFAULT_LEVELS_DB: dict[str, float] = {
     "drums_full": -10.0,
     "room": -12.0,  # uncompressed; if you crush it, start 3-6 dB lower
     "no_drums": -3.0,
+    "mix_ref": 0.0,
 }
 
 GROUP_OF = {
@@ -105,11 +106,12 @@ GROUP_OF = {
     "drums_full": "kit",
     "room": "room",
     "no_drums": "song",
+    "mix_ref": "song",
 }
 
 # drums_full already contains drums_dry + room, so using both would count
 # the room twice. The default stack uses dry + room; full is there for A/B.
-DEFAULT_MUTED = {"drums_full"}
+DEFAULT_MUTED = {"drums_full", "mix_ref"}
 
 
 def default_session(stem_files: dict[str, str]) -> list[LayerTrack]:
@@ -159,13 +161,21 @@ def mixdown(kit_dir: str | Path, tracks: list[LayerTrack], include_song: bool = 
     return Audio(out.astype(np.float32), sr)
 
 
-def write_reaper_project(path: str | Path, tracks: list[LayerTrack], sr: int, length_s: float) -> Path:
-    """A REAPER project with every layer on its own track, grouped in folders, at the starting levels."""
+def write_reaper_project(
+    path: str | Path, tracks: list[LayerTrack], sr: int, length_s: float, midi_file: str | None = None, bpm: float | None = None
+) -> Path:
+    """A REAPER project with every layer on its own track, grouped in folders, at the starting levels.
+
+    The MIDI performance goes on its own track at the end, ready for any drum
+    sampler (the project tempo matches the MIDI file's).
+    """
     path = Path(path)
     groups: dict[str, list[LayerTrack]] = {}
     for t in tracks:
         groups.setdefault(t.group, []).append(t)
     lines = ['<REAPER_PROJECT 0.1 "7.0" 0', f"  SAMPLERATE {sr} 0 0"]
+    if bpm:
+        lines.append(f"  TEMPO {bpm:g} 4 4")
     for g, ts in groups.items():
         lines += ["  <TRACK", f'    NAME "{g.upper()}"', "    ISBUS 1 1", "  >"]
         for i, t in enumerate(ts):
@@ -186,6 +196,21 @@ def write_reaper_project(path: str | Path, tracks: list[LayerTrack], sr: int, le
                 "    >",
                 "  >",
             ]
+    if midi_file:
+        lines += [
+            "  <TRACK",
+            '    NAME "MIDI (drum sampler)"',
+            "    MUTESOLO 1 0 0",
+            "    <ITEM",
+            "      POSITION 0",
+            f"      LENGTH {length_s:.6f}",
+            f'      NAME "{Path(midi_file).name}"',
+            "      <SOURCE MIDI",
+            f'        FILE "{midi_file}"',
+            "      >",
+            "    >",
+            "  >",
+        ]
     lines.append(">")
     path.write_text("\n".join(lines) + "\n")
     return path
