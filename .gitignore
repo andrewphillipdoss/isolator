@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.egg-info/
+*.whl
+.pytest_cache/
+# Iso output and model caches never belong in git (the community weights must not be redistributed).
+iso_out/
+*.ckpt
+*.th
+*.onnx
+*.wav
+*.mp3
+*.flac
+!tests/data/*.wav

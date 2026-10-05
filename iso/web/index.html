@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Iso</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f5a524' stroke-width='4'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f5a524'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Iso <span>drum layer kits</span></div>
+    <div class="device" id="status"></div>
+  </header>
+
+  <main>
+    <aside>
+      <section class="panel">
+        <h2>New song</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept="audio/*">
+          <span id="dropLabel">Drop a song here or click to choose</span>
+        </label>
+        <div class="row">
+          <label for="preset">Quality</label>
+          <select id="preset">
+            <option value="best">Best</option>
+            <option value="max">Max (slowest)</option>
+            <option value="fast">Fast (preview)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="kit">Trigger kit</label>
+          <select id="kit"><option value="">None (MIDI only)</option></select>
+        </div>
+        <div class="row">
+          <label for="gate">Gate kick/snare/toms</label>
+          <input type="checkbox" id="gate" checked>
+        </div>
+        <button id="start" class="primary" disabled>Make layer kit</button>
+        <div class="job" id="job" hidden>
+          <div class="bar"><div id="jobBar"></div></div>
+          <div id="jobMsg"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Library</h2>
+        <ul id="library"><li class="muted">Nothing yet</li></ul>
+      </section>
+    </aside>
+
+    <section class="mixer" id="mixer" hidden>
+      <div class="mixer-head">
+        <div>
+          <h1 id="kitName"></h1>
+          <div class="muted" id="kitInfo"></div>
+        </div>
+        <div class="actions">
+          <button id="bounce">Bounce drums</button>
+          <button id="bounceSong">Bounce with song</button>
+          <a id="dlMidi" class="btn">MIDI</a>
+          <a id="dlRpp" class="btn">REAPER project</a>
+          <a id="dlZip" class="btn">Download kit</a>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button id="play" class="primary round" aria-label="Play">&#9654;</button>
+        <button id="stop" class="round" aria-label="Stop">&#9632;</button>
+        <div class="time" id="time">0:00.0</div>
+        <div class="seek" id="seek"><div id="seekFill"></div></div>
+        <label class="master">Master <input type="range" id="master" min="-30" max="6" step="0.5" value="-6"><span id="masterDb">-6.0 dB</span></label>
+      </div>
+
+      <p class="hint">
+        Stack: <b>pieces</b> at the core, <b>triggers</b> underneath for punch and consistency, the <b>dry kit</b> to glue it,
+        a little <b>room</b> on top. Every layer is sample-aligned, so they sum without phasing. Hit Play with
+        <b>no_drums</b> unmuted to hear it in the song.
+      </p>
+
+      <div id="groups"></div>
+    </section>
+
+    <section class="empty" id="empty">
+      <h1>Make a layer kit</h1>
+      <p>Drop in a song. Iso pulls the drums out and gives you each piece cleaned up, aligned trigger
+        layers, the full kit dry, the room on its own, MIDI, and a REAPER session, all lined up to the sample.</p>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
