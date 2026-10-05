@@ -44,7 +44,7 @@ def cmd_split(args) -> int:
         print(f"  MIDI: {report['midi']} (set your DAW to {report['bpm']:g} BPM before importing)")
         for p, t in report["triggers"].items():
             note = ""
-            if t["hits"] and t["aligned"] < 0.5 * t["hits"]:
+            if t["hits"] and (t["aligned"] < 0.5 * t["hits"] or t.get("polarity_confidence", 1) < 0.3):
                 note = "  <- this sample doesn't resemble the recorded drum much; check polarity by ear"
             print(f"  trig_{p}: {t['aligned']}/{t['hits']} hits phase-aligned, polarity {'+' if t['polarity'] > 0 else '-'}{note}")
         print(f"  done in {report['elapsed_s']}s. Open layer_kit.rpp in REAPER or drag the WAVs into any DAW at bar 1.")
@@ -97,17 +97,54 @@ def cmd_serve(args) -> int:
 
 
 def cmd_kit_import(args) -> int:
-    from .kits import import_hydrogen
+    from .kits import import_hydrogen, import_sfz
 
     src = Path(args.source)
-    if not (src / "drumkit.xml").exists():
-        print(f"{src} has no drumkit.xml (only Hydrogen kits are supported so far)", file=sys.stderr)
+    dest = Path(args.dest) if args.dest else Path(args.kits_dir) / src.stem
+    if src.suffix.lower() == ".sfz":
+        keys = None
+        if args.key:
+            keys = {int(k): p for k, p in (item.split("=", 1) for item in args.key)}
+        try:
+            copied = import_sfz(src, dest, keys)
+        except ImportError:
+            print("SFZ import needs pysfizz: pip install pysfizz", file=sys.stderr)
+            return 1
+    elif (src / "drumkit.xml").exists():
+        copied = import_hydrogen(src, dest)
+    else:
+        print(f"{src}: give a Hydrogen kit folder (with drumkit.xml) or an .sfz file", file=sys.stderr)
         return 1
-    dest = Path(args.dest) if args.dest else Path(args.kits_dir) / src.name
-    copied = import_hydrogen(src, dest)
     for piece, files in sorted(copied.items()):
         print(f"  {piece:6s} {len(files)} samples")
     print(f"Imported to {dest}. Use it with: iso split song.mp3 --kit {dest}")
+    return 0
+
+
+def cmd_kit_assemble(args) -> int:
+    from .kits import assemble
+
+    folders = {
+        piece: dirs
+        for piece, dirs in (
+            ("kick", args.kick),
+            ("snare", args.snare),
+            ("toms", args.tom),
+            ("hihat", args.hihat),
+            ("hihat_open", args.hihat_open),
+            ("ride", args.ride),
+            ("crash", args.crash),
+        )
+        if dirs
+    }
+    if not folders:
+        print("give at least one folder, e.g. --kick kick_samples/ --snare snare_samples/", file=sys.stderr)
+        return 1
+    dest = Path(args.dest) if args.dest else Path(args.kits_dir) / args.name
+    copied = assemble(dest, folders)
+    for piece, files in sorted(copied.items()):
+        print(f"  {piece:10s} {len(files)} samples")
+    print(f"Kit ready: {dest}")
     return 0
 
 
@@ -196,11 +233,20 @@ def main(argv: list[str] | None = None) -> int:
 
     k = sub.add_parser("kit", help="manage trigger kits")
     ksub = k.add_subparsers(dest="kit_cmd", required=True)
-    ki = ksub.add_parser("import", help="import a Hydrogen drumkit folder (drumkit.xml + samples)")
+    ki = ksub.add_parser("import", help="import a Hydrogen kit folder or an SFZ file (run once per close-mic SFZ)")
     ki.add_argument("source")
+    ki.add_argument("--key", action="append", help="KEY=PIECE for non-GM kits, e.g. --key 36=kick --key 38=snare")
     ki.add_argument("--dest", help="output folder (default: ~/.cache/iso/kits/<name>, where the UI looks)")
     ki.add_argument("--kits-dir", default=str(Path.home() / ".cache" / "iso" / "kits"))
     ki.set_defaults(fn=cmd_kit_import)
+    ka = ksub.add_parser("assemble", help="build a kit from folders of one-shots (e.g. a sample pack's close-mic folders)")
+    ka.add_argument("name")
+    for flag in ("kick", "snare", "hihat", "hihat-open", "ride", "crash"):
+        ka.add_argument(f"--{flag}", action="append", metavar="DIR")
+    ka.add_argument("--tom", action="append", metavar="DIR", help="one folder per tom, high to low")
+    ka.add_argument("--dest")
+    ka.add_argument("--kits-dir", default=str(Path.home() / ".cache" / "iso" / "kits"))
+    ka.set_defaults(fn=cmd_kit_assemble)
 
     e = sub.add_parser("eval", help="measure quality on a song with known ground truth")
     esub = e.add_subparsers(dest="eval_cmd", required=True)

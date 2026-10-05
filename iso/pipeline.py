@@ -229,6 +229,7 @@ def run(
                 stems[f"trig_{p}"] = track
                 trigger_reports[p] = {
                     "polarity": rep.polarity,
+                    "polarity_confidence": rep.polarity_confidence,
                     "median_corr": round(rep.median_corr, 3),
                     "aligned": sum(h["aligned"] for h in rep.hits),
                     "hits": len(rep.hits),

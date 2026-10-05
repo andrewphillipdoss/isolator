@@ -72,3 +72,27 @@ def test_piece_name_mapping():
     assert piece_for("Ride 2") == "ride"
     assert piece_for("Splash") == "crash"
     assert piece_for("Cowbell") is None
+
+
+def test_sfz_import_renders_layers_and_round_robins(tmp_path):
+    import pytest
+
+    pytest.importorskip("pysfizz")
+    from iso.kits import import_sfz
+
+    (tmp_path / "s").mkdir()
+    lines = []
+    for vi, (lo, hi, g) in enumerate(((1, 64, 0.3), (65, 127, 1.0))):
+        for rr in (1, 2):
+            fn = f"s/k_{vi}_{rr}.wav"
+            sf.write(tmp_path / fn, (g * kick(seed=vi * 10 + rr)).astype(np.float32), SR)
+            lines.append(f"<region> sample={fn} key=36 lovel={lo} hivel={hi} seq_length=2 seq_position={rr}")
+        fn = f"s/t_{vi}.wav"
+        sf.write(tmp_path / fn, (g * tom(140)).astype(np.float32), SR)
+        lines.append(f"<region> sample={fn} key=45 lovel={lo} hivel={hi}")
+    (tmp_path / "kit.sfz").write_text("\n".join(lines) + "\n")
+    copied = import_sfz(tmp_path / "kit.sfz", tmp_path / "out")
+    assert len(copied["kick"]) == 4  # 2 layers x 2 round robins
+    assert len(copied["toms"]) == 2 and all(f.startswith("tom_1__") for f in copied["toms"])
+    k = load_kit_folder(tmp_path / "out", SR)
+    assert len(k.pieces["kick"].layers) == 2 and all(len(layer) == 2 for layer in k.pieces["kick"].layers)

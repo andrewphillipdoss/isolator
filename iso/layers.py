@@ -77,16 +77,17 @@ class LayerTrack:
 DEFAULT_LEVELS_DB: dict[str, float] = {
     "kick": 0.0,
     "snare": 0.0,
-    "toms": 0.0,
-    "hihat": -3.0,
-    "ride": -3.0,
-    "crash": -3.0,
-    "trig_kick": -6.0,
-    "trig_snare": -8.0,
-    "trig_toms": -10.0,
+    "toms": -2.0,
+    "hihat": -4.0,
+    "ride": -4.0,
+    "crash": -4.0,
+    # Trigger stems are level-matched to their piece, so these are "this far under".
+    "trig_kick": -8.0,  # -10 natural ... -6 punchy
+    "trig_snare": -10.0,  # -12 ... -8
+    "trig_toms": -12.0,
     "drums_dry": -8.0,
     "drums_full": -10.0,
-    "room": -15.0,
+    "room": -12.0,  # uncompressed; if you crush it, start 3-6 dB lower
     "no_drums": -3.0,
 }
 

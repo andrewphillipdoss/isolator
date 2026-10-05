@@ -45,9 +45,27 @@ class KitPiece:
     variants: list["KitPiece"] = field(default_factory=list)
 
     def pick(self, velocity: int, rr: int) -> tuple[OneShot, int]:
+        """Layer by MIDI velocity (even split), round robin `rr`."""
         i = min(len(self.layers) - 1, int((velocity - 1) / 127 * len(self.layers)))
         layer = self.layers[i]
         return layer[rr % len(layer)], i
+
+    def pick_by_level(self, rel_db: float, counters: dict[int, int]) -> tuple[OneShot, int]:
+        """Layer whose recorded level, relative to the loudest layer, is nearest `rel_db`.
+
+        A hit 12 dB under the drummer's loud hits gets the sample that was
+        played about 12 dB softer, so the timbre follows the dynamics.
+        Round robins advance per layer, so an accent pattern that keeps
+        returning to one layer still cycles through its samples instead of
+        machine-gunning one.
+        """
+        top = self.layers[-1][0].level_db
+        rel = np.array([layer[0].level_db - top for layer in self.layers])
+        i = int(np.argmin(np.abs(rel - min(rel_db, 0.0))))
+        k = counters.get(i, 0)
+        counters[i] = k + 1
+        layer = self.layers[i]
+        return layer[k % len(layer)], i
 
 
 @dataclass
@@ -175,6 +193,7 @@ def ncc_scan(ref: np.ndarray, template: np.ndarray, center: int, max_shift: int)
 class TriggerReport:
     polarity: int
     hits: list[dict]
+    polarity_confidence: float = 1.0  # 0..1; under ~0.3 the sample barely resembles the drum, check by ear
 
     @property
     def median_corr(self) -> float:
@@ -198,6 +217,11 @@ def render_triggers(
 
     `polarity`: None decides it from the material; +1 / -1 forces it.
     `variant_of_hit`: per hit, which of `kit_piece.variants` to play (toms).
+
+    The track is level-matched to the stem: a hit lands at the same peak as
+    the hit it reinforces (dynamics=1), or at the stem's typical loud-hit
+    level (dynamics=0). A trigger fader at -8 dB therefore really means
+    8 dB under the piece.
     """
     p = params or AlignParams()
     n = piece_stem.shape[-1]
@@ -214,12 +238,13 @@ def render_triggers(
     banded: dict[int, np.ndarray] = {}
     n_var = len(kit_piece.variants)
     n_song = (max(variant_of_hit) + 1) if variant_of_hit else 1
+    counters: dict[int, dict[int, int]] = {}
     for i, h in enumerate(hits):
         kp = kit_piece
         if n_var and variant_of_hit:
             v = variant_of_hit[i]
             kp = kit_piece.variants[round(v * (n_var - 1) / (n_song - 1)) if n_song > 1 else (n_var - 1) // 2]
-        shot, layer = kp.pick(h.velocity, i)
+        shot, layer = kp.pick_by_level(h.level_db - ref_db, counters.setdefault(id(kp), {}))
         scan = None
         if align:
             key = id(shot)
@@ -230,12 +255,14 @@ def render_triggers(
                 scan = ncc_scan(ref, tmpl, h.sample, S)
         plan.append((h, shot, layer, scan))
 
+    vote, weight = 0.0, 0.0
+    for _, _, _, scan in plan:
+        if scan is not None:
+            k = int(np.argmax(np.abs(scan)))
+            vote += scan[k] * abs(scan[k])
+            weight += scan[k] ** 2
+    confidence = abs(vote) / weight if weight > 0 else 0.0
     if polarity is None:
-        vote = 0.0
-        for _, _, _, scan in plan:
-            if scan is not None:
-                k = int(np.argmax(np.abs(scan)))
-                vote += scan[k] * abs(scan[k])
         polarity = -1 if vote < 0 else 1
 
     rows = []
@@ -246,7 +273,7 @@ def render_triggers(
             k = int(np.argmax(signed))
             if signed[k] >= p.min_corr:
                 shift, corr, aligned = k - S, float(signed[k]), True
-        gain = 10.0 ** (dynamics * (h.level_db - ref_db) / 20.0)
+        gain = 10.0 ** ((ref_db + dynamics * (h.level_db - ref_db)) / 20.0)
         start = h.sample - shot.attack + shift
         a, b = max(0, start), min(n, start + shot.data.shape[1])
         if b > a:
@@ -262,6 +289,6 @@ def render_triggers(
                 "aligned": aligned,
             }
         )
-    return out, TriggerReport(polarity=polarity, hits=rows)
+    return out, TriggerReport(polarity=polarity, hits=rows, polarity_confidence=round(confidence, 3))
 
 

@@ -1,5 +1,13 @@
 """Importing free sample kits into Iso's trigger-kit layout.
 
+Recommended free kits for indie-rock triggers (use the CLOSE-mic SFZ of
+each piece; Iso's own room stem supplies the room):
+
+* Wilkinson Naked Drums (CC BY 4.0): github.com/sfzinstruments/WilkinsonAudio.NakedDrums
+* DrumGizmo DRSKit (CC BY 4.0): github.com/sfzinstruments/DrumGizmo.DRSKit
+* Karoryfer Big Rusty Drums (CC0, dry and characterful): github.com/sfzinstruments/karoryfer.big-rusty-drums
+* Hydrogen GMRockKit (GPL, tiny; good for testing): inside github.com/hydrogen-music/hydrogen
+
 Iso's layout is one folder per piece, any number of one-shots inside:
 
     my_kit/kick/*.wav  my_kit/snare/*.wav  my_kit/toms/*.wav  my_kit/hihat/*.wav ...
@@ -76,4 +84,95 @@ def import_hydrogen(kit_dir: str | Path, out_dir: str | Path) -> dict[str, list[
                 target = dest / f"{tag}__{Path(f).name}"
                 shutil.copy2(src, target)
                 copied.setdefault(piece, []).append(target.name)
+    return copied
+
+
+AUDIO_EXTS = {".wav", ".flac", ".aif", ".aiff", ".ogg"}
+
+
+def assemble(out_dir: str | Path, folders: dict[str, list[str | Path]]) -> dict[str, list[str]]:
+    """Build a trigger kit from plain folders of one-shots, e.g. a sample pack's close-mic folders.
+
+    `folders` maps a piece to one or more folders. Several tom folders
+    (high to low) become separate toms; files are copied as-is (FLAC is
+    fine) and velocity layers are worked out at load time from loudness.
+    """
+    out_dir = Path(out_dir)
+    copied: dict[str, list[str]] = {}
+    for piece, dirs in folders.items():
+        for i, d in enumerate(dirs):
+            d = Path(d)
+            files = sorted(f for f in d.iterdir() if f.suffix.lower() in AUDIO_EXTS)
+            if not files:
+                raise ValueError(f"{d} has no audio files")
+            tag = f"tom_{i + 1}" if piece == "toms" else (d.name if len(dirs) > 1 else piece)
+            dest = out_dir / piece
+            dest.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                target = dest / f"{tag}__{f.name}"
+                shutil.copy2(f, target)
+                copied.setdefault(piece, []).append(target.name)
+    return copied
+
+
+# General MIDI drum keys -> Iso pieces. Several keys can map to toms; each
+# becomes its own drum (variant) under the toms piece.
+GM_KEY_PIECE = {
+    35: "kick", 36: "kick",
+    38: "snare", 40: "snare",
+    41: "toms", 43: "toms", 45: "toms", 47: "toms", 48: "toms", 50: "toms",
+    42: "hihat", 46: "hihat_open",
+    51: "ride",
+    49: "crash", 57: "crash",
+}
+
+
+def import_sfz(sfz: str | Path, out_dir: str | Path, keys: dict[int, str] | None = None, sr: int = 44100) -> dict[str, list[str]]:
+    """Render every velocity layer x round robin of an SFZ kit to one-shots.
+
+    Uses sfizz (pysfizz, BSD-2), so ARIA extensions, $defines, #includes
+    and round-robin sequencing all resolve exactly as in a sampler. Pass
+    `keys` ({midi_key: piece}) for kits that don't follow the General MIDI
+    map, or to import only some keys.
+    """
+    import hashlib
+
+    import numpy as np
+    import pysfizz
+    import soundfile as sf
+
+    keys = keys or GM_KEY_PIECE
+    synth = pysfizz.Synth(sample_rate=sr, block_size=256)
+    if not synth.load_sfz_file(str(sfz)):
+        raise ValueError(f"sfizz could not load {sfz}")
+    out_dir = Path(out_dir)
+    copied: dict[str, list[str]] = {}
+    toms_seen = sorted(k for k, p in keys.items() if p == "toms" and synth.get_note_info(k))
+    for key, piece in keys.items():
+        try:
+            regions = synth.get_note_info(key)
+        except Exception:
+            continue
+        if not regions:
+            continue
+        bands = sorted({(r["lovel"], r["hivel"]) for r in regions})
+        per_band = {b: sum(1 for r in regions if (r["lovel"], r["hivel"]) == b) for b in bands}
+        dest = out_dir / piece
+        dest.mkdir(parents=True, exist_ok=True)
+        tag = f"tom_{toms_seen.index(key) + 1}" if piece == "toms" else f"key{key}"
+        seen: set[str] = set()
+        for (lo, hi), n in per_band.items():
+            for _ in range(2 * n):  # round robins cycle inside sfizz; render each one at least once
+                y = np.asarray(synth.render_note(key, hi, 0.05, 4.0), dtype=np.float32)
+                audible = np.nonzero(np.abs(y).max(axis=0) > 1e-5)[0]
+                if audible.size == 0:
+                    continue
+                y = y[:, : audible[-1] + 1]
+                h = hashlib.md5(np.round(y, 5).tobytes()).hexdigest()
+                if h in seen:
+                    continue
+                seen.add(h)
+                name = f"{tag}__v{hi:03d}_{len(seen):02d}.wav"
+                sf.write(dest / name, y.T, sr, subtype="FLOAT")
+                copied.setdefault(piece, []).append(name)
     return copied

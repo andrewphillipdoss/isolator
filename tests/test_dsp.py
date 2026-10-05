@@ -172,3 +172,39 @@ def test_realign_fixes_a_shifted_stem_and_leaves_aligned_ones_alone():
     rng = np.random.default_rng(0)
     noise = rng.standard_normal(x.shape).astype(np.float32) * 1e-4
     assert realign(x, noise)[1] == 0  # unrelated content is never shifted
+
+
+def test_triggers_are_level_matched_to_their_piece():
+    real = kick(seed=5, f0=110.0, f1=52.0, decay=0.2)
+    stem = stereo(0.3 * place(N, real, STARTS, GAINS))  # piece peaks well under 0 dBFS
+    hits = detect_hits(stem, SR, DetectParams(rel_db=30))
+    loud = OneShot(data=stereo(kick(seed=9)) / np.max(np.abs(kick(seed=9))), attack=0, level_db=0.0, name="k.wav")
+    out, _ = render_triggers(stem, SR, hits, KitPiece("kick", [[loud]]), dynamics=1.0)
+    from iso.onsets import hit_level_db
+
+    # Soft hits right after loud ones are found on the exact sample too.
+    assert [h.sample for h in hits] == STARTS
+    prev = -(10**9)
+    for h in hits:
+        if h.sample - prev > int(0.4 * SR):  # isolated hit: no earlier ring to confuse the measurement
+            trig_db = hit_level_db(out, h.sample, SR)
+            assert abs(trig_db - h.level_db) < 0.5, (trig_db, h.level_db)
+        prev = h.sample
+
+
+def test_round_robins_cycle_within_each_layer():
+    soft = [OneShot(stereo(kick(seed=s)) * 0.3, 0, -10.0, f"soft{s}") for s in range(2)]
+    hard = [OneShot(stereo(kick(seed=s)), 0, 0.0, f"hard{s}") for s in range(2, 4)]
+    kp = KitPiece("kick", [soft, hard])
+    counters = {}
+    picks = [kp.pick_by_level(rel, counters)[0].name for rel in (0, -10, 0, -10, 0, -10)]
+    assert picks == ["hard2", "soft0", "hard3", "soft1", "hard2", "soft0"]
+
+
+def test_velocity_curve_matches_sampler_playback():
+    from iso.onsets import to_velocity
+
+    p = DetectParams()
+    assert to_velocity(-6.0, -6.0, p) == 127
+    assert to_velocity(-18.0, -6.0, p) == 64  # -12 dB -> plays back 12 dB down at 40*log10(v/127)
+    assert to_velocity(-2.0, -6.0, p) == 127  # louder than reference clamps

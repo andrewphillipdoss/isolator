@@ -23,7 +23,9 @@ models = ["msst[bs-roformer,scnet,mdx23c,htdemucs]>=0.1,<0.2"]
 # Optional alternative backend (python-audio-separator).
 audio-separator = ["audio-separator[cpu]>=0.47"]
 ui = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
-all = ["iso[models,ui]"]
+# Importing SFZ sample kits (sfizz, BSD-2).
+sfz = ["pysfizz>=0.1"]
+all = ["iso[models,ui,sfz]"]
 dev = ["pytest>=8"]
 
 [project.scripts]

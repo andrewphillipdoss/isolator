@@ -26,8 +26,7 @@ class DetectParams:
     min_interval_ms: float = 40.0  # two hits closer than this count as one
     delta: float = 0.07  # peak must exceed the local mean by this much (envelope normalized to 1)
     rel_db: float = 30.0  # hits further than this below the stem's typical loud hit are dropped as leakage
-    velocity_range_db: float = 36.0  # level span mapped onto velocities 127 -> velocity_floor
-    velocity_floor: int = 8
+    velocity_floor: int = 1
     fine: bool = True  # snap to the stick/beater transient (see fine_onset)
 
 
@@ -35,10 +34,10 @@ class DetectParams:
 # hats keep a wider window than kick and crash.
 PIECE_PARAMS: dict[str, DetectParams] = {
     "kick": DetectParams(min_interval_ms=45, rel_db=30),
-    "snare": DetectParams(min_interval_ms=40, rel_db=36),
+    "snare": DetectParams(min_interval_ms=30, rel_db=36),
     # In fast fills the fine pass can jump to the next tom's transient.
     "toms": DetectParams(min_interval_ms=50, rel_db=30, fine=False),
-    "hihat": DetectParams(min_interval_ms=35, rel_db=36),
+    "hihat": DetectParams(min_interval_ms=30, rel_db=36),
     "ride": DetectParams(min_interval_ms=60, rel_db=36),
     "crash": DetectParams(min_interval_ms=90, rel_db=30),
 }
@@ -196,8 +195,14 @@ def reference_level_db(levels_db: np.ndarray) -> float:
 
 
 def to_velocity(level_db: float, ref_db: float, params: DetectParams) -> int:
-    v = 127.0 + (level_db - ref_db) * (127.0 - params.velocity_floor) / params.velocity_range_db
-    return int(np.clip(round(v), 1, 127))
+    """MIDI velocity on the curve samplers play back with: gain_dB = 40 * log10(v / 127).
+
+    That's the SFZ default, and close to most drum plugins. A hit 12 dB under
+    the loud hits becomes velocity 64 and plays back 12 dB down, instead of
+    the squashed -6.5 dB a linear-in-dB mapping would give.
+    """
+    v = 127.0 * 10.0 ** (min(level_db - ref_db, 0.0) / 40.0)
+    return int(np.clip(round(v), params.velocity_floor, 127))
 
 
 def detect_hits(x: np.ndarray, sr: int, params: DetectParams | None = None) -> list[Hit]:
@@ -209,21 +214,27 @@ def detect_hits(x: np.ndarray, sr: int, params: DetectParams | None = None) -> l
     # A spectral-flux frame peaks as the attack enters the analysis window,
     # so the true attack sits a few ms after the frame centre, not before it.
     back, fwd = 6.0, 20.0
+    tilted = np.concatenate([mono[:1], mono[1:] - 0.95 * mono[:-1]])
     for f in frames:
         s = refine_onset(mono, int(f * _HOP), sr, back, fwd)
-        if not is_new_hit(mono, s, sr):
-            # Probably a hit inside a louder or still-ringing tail (fast tom
-            # fills, ghost notes). The tail has little treble left, while a new
-            # stick strike brings a fresh burst of it, so look again with the
-            # signal tilted toward the attack.
-            # Also require the overall level to still be rising (>= 1 dB), so
-            # noise in a decaying tail doesn't count as a hit.
-            tilted = np.concatenate([mono[:1], mono[1:] - 0.95 * mono[:-1]])
-            s = refine_onset(tilted, int(f * _HOP), sr, back, fwd)
-            if not (is_new_hit(tilted, s, sr, min_rise_db=6.0) and is_new_hit(mono, s, sr, min_rise_db=1.0)):
-                continue
+        raw_ok = is_new_hit(mono, s, sr)
+        # The same search on a treble-tilted copy. A hit inside a still-ringing
+        # tail (fast tom fills, ghost notes, a soft kick after a loud one)
+        # barely raises the overall level, but a new stick strike brings a
+        # fresh burst of treble. Requiring the overall level to rise >= 1 dB
+        # too keeps noise in a decaying tail from counting as a hit.
+        t = refine_onset(tilted, int(f * _HOP), sr, back, fwd)
+        tilt_ok = is_new_hit(tilted, t, sr, min_rise_db=6.0) and is_new_hit(mono, t, sr, min_rise_db=1.0)
+        if not (raw_ok or tilt_ok):
+            continue
         if params.fine:
+            # The fine pass looks up to 12 ms ahead but only 2 ms back, so start
+            # from the earlier candidate: in a beating low tail the raw search
+            # can land ~10 ms late, the tilted one errs early.
+            s = min(c for c, ok in ((s, raw_ok), (t, tilt_ok)) if ok)
             s = fine_onset(mono, s, sr)
+        elif not raw_ok:
+            s = t
         starts.add(s)
     if not starts:
         return []
