@@ -56,6 +56,7 @@ MODELS: dict[str, ModelSpec] = {
         ("drums", "bass", "other", "vocals"),
         "Drums 11.6 dB (Multisong). The SCNet-XL family keeps attacks sharper than RoFormers; ensemble partner.",
         ckpt_size=214063778,
+        sha256="ac25975f0f5704f3d1a3c3c251505b7a0f417a22eafe82773440ee4f7e14b74f",
     ),
     "htdemucs_ft_drums": ModelSpec(
         "htdemucs",

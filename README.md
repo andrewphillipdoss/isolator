@@ -60,8 +60,8 @@ Presets:
 | preset | drums | room split | pieces | test-time augmentation (TTA) | use |
 |---|---|---|---|---|---|
 | `fast` | BS-RoFormer SW | yes | DrumSep 6-stem | off | quick audition, laptop CPU |
-| `best` (default) | BS-RoFormer SW | yes | DrumSep 5-stem + 6-stem (ride/crash split) | off | normal |
-| `max` | SW + SCNet-XL (3:1) | yes | both, blended | on, overlap 4 | final renders, GPU |
+| `best` (default) | SW + SCNet-XL (2:1) | yes | DrumSep 5-stem + 6-stem (ride/crash split) | off | normal; best on a GPU |
+| `max` | SW + SCNet-XL (2:1) | yes | both, blended | on, overlap 4 | final renders, GPU |
 
 ## Recorded the drums yourself? Multitrack mode
 

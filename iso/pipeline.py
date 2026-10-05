@@ -57,13 +57,15 @@ class Config:
 PRESETS: dict[str, Config] = {
     # One model per stage, no TTA. Good for auditioning on a laptop CPU.
     "fast": Config(dereverb_model="dereverb_mdx23c", piece_models=["drumsep_6"]),
-    # The default: best single drum model, both piece models. TTA only buys
-    # ~0.1 dB for 3x the compute, so it's saved for "max".
-    "best": Config(),
-    # Adds SCNet-XL (sharper attacks) to the drum ensemble, blends both piece models, TTA on.
+    # The default. BS-RoFormer SW + SCNet-XL (2:1) for the drums: on Iso's
+    # test song this beat SW alone on SDR (22.9 vs 22.3 dB) and attack
+    # preservation (0.40 vs 0.50 dB error). TTA only buys ~0.1 dB for 3x the
+    # compute, so it's saved for "max".
+    "best": Config(drum_models=["bs_roformer_sw", "scnet_xl_ihf"], drum_weights=[2.0, 1.0]),
+    # Adds TTA and overlap 4, and blends both piece models.
     "max": Config(
         drum_models=["bs_roformer_sw", "scnet_xl_ihf"],
-        drum_weights=[3.0, 1.0],
+        drum_weights=[2.0, 1.0],
         piece_blend=0.3,
         tta=True,
         overlap=4,

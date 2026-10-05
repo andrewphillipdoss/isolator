@@ -106,7 +106,7 @@ correlated drum layers.
 | Stage | Model | Why | License |
 |---|---|---|---|
 | Song → drums | **BS-RoFormer SW** (6-stem) | Best public drums model: 14.1 dB SDR (MVSep Multisong), ~2.5 dB above anything else downloadable. Its own guitar stem helps on rock. | unknown provenance; personal use |
-| (max preset) | + **SCNet-XL IHF**, avg 3:1 | CNN that keeps attacks ~2× sharper than RoFormers at equal SDR (Beyond SDR, 2026) | MIT repo, MUSDB-trained |
+| (best/max presets) | + **SCNet-XL IHF**, avg 2:1 | A CNN partner. On Iso's test song the blend beat SW alone on SDR (22.9 vs 22.3 dB) *and* attack preservation (0.40 vs 0.50 dB error). | MIT repo, MUSDB-trained |
 | Drums → dry + room | **MDX23C De-Reverb** (aufr33 & jarredou) | General-purpose (not vocal-trained) dereverb; ~4 dB on MVSep's drums test. The popular RoFormer dereverbs are vocal-only and score ~0–2 dB on drums. | unstated |
 | Dry kit → pieces | **DrumSep 5-stem** (jarredou) + **6-stem** (aufr33 & jarredou) | 5-stem has the best public piece SDR (kick 16.7, snare 11.5, toms 12.3). The 6-stem guides the ride/crash split of its cymbals; ride + crash = cymbals exactly. | unstated |
 | CPU fallback | HTDemucs FT drums | MIT, fast, ~3 dB worse | MIT |
@@ -253,8 +253,8 @@ estimates from research, so time your own):
    and snare false positives.
 3. **Tempo map** (beat_this, MIT), so MIDI follows a band that didn't play
    to a click.
-4. **Validate the SW + SCNet-XL ensemble** on the harness (SDR and attack
-   sharpness). Make it the default only if it wins.
+4. ~~Validate the SW + SCNet-XL ensemble~~ **Done:** it wins on both SDR
+   and attacks and is now the `best` default.
 5. **More room**: a FoxJoy Reverb-HQ + MDX23C dereverb ensemble, or a
    "room amount" control.
 6. **Low-bitrate sources**: an optional Apollo restoration pre-pass, for
@@ -295,7 +295,7 @@ estimates from research, so time your own):
 | `dereverb_mdx23c` | MDX23C-De-Reverb-aufr33-jarredou.ckpt (448 MB) | `eae2471b…e914` |
 | `drumsep_5` | drumsep_5stems_mdx23c_jarredou.ckpt (438 MB) | `1f8e636f…b2e0` |
 | `drumsep_6` | MDX23C-DrumSep-aufr33-jarredou.ckpt (438 MB) | `d2a4aa53…96d0` |
-| `scnet_xl_ihf` | model_scnet_ep_36_sdr_10.0891.ckpt (214 MB) | size-checked |
+| `scnet_xl_ihf` | model_scnet_ep_36_sdr_10.0891.ckpt (214 MB) | `ac25975f…b74f` |
 | `htdemucs_ft_drums` | f7e0c4bc-ba3fe64a.th (84 MB) | size-checked |
 
 Full URLs are in `iso/models.py`.
