@@ -7,7 +7,7 @@ name = "iso"
 version = "0.1.0"
 description = "Drum isolation and a phase-coherent layer kit (pieces, triggers, full kit, room) for mixing"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "numpy>=1.26",
   "scipy>=1.11",
@@ -17,10 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The separation models. Pulls in PyTorch; on Apple Silicon this uses MPS,
-# on NVIDIA it uses CUDA, otherwise CPU.
-models = ["audio-separator[cpu]>=0.47"]
+# The separation models (MSST, MIT). Pulls in PyTorch, which uses CUDA on
+# NVIDIA, MPS on Apple Silicon, otherwise CPU.
+models = ["msst[bs-roformer,scnet,mdx23c,htdemucs]>=0.1,<0.2"]
+# Optional alternative backend (python-audio-separator).
+audio-separator = ["audio-separator[cpu]>=0.47"]
 ui = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+all = ["iso[models,ui]"]
 dev = ["pytest>=8"]
 
 [project.scripts]

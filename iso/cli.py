@@ -51,6 +51,27 @@ def cmd_split(args) -> int:
     return 0
 
 
+def cmd_debleed(args) -> int:
+    from .multitrack import Mic, MultitrackConfig, run_multitrack
+
+    mics = []
+    for role in ("kick", "snare", "tom", "hihat", "ride", "oh", "room"):
+        for path in getattr(args, role) or []:
+            mics.append(Mic(role, Path(path)))
+    if not mics:
+        print("give at least one mic, e.g. --kick kick.wav --snare snare.wav --oh oh.wav", file=sys.stderr)
+        return 1
+    cfg = MultitrackConfig(gate=not args.no_gate, kit=args.kit, bpm=args.bpm)
+    backend = make_backend(args.models_dir, tta=not args.no_tta, overlap=args.overlap, cpu=args.cpu)
+    rep = run_multitrack(mics, Path(args.out), backend, cfg)
+    for m in rep["mics"]:
+        hits = f", {m['hits']} hits" if "hits" in m else ""
+        print(f"  {m['role']:5s} {Path(m['source']).name}{hits} -> {', '.join(m['files'].values())}")
+    if rep["midi"]:
+        print(f"  MIDI: {rep['midi']}")
+    return 0
+
+
 def cmd_bounce(args) -> int:
     from .audio import save
     from .layers import load_session, mixdown
@@ -87,6 +108,23 @@ def cmd_kit_import(args) -> int:
     for piece, files in sorted(copied.items()):
         print(f"  {piece:6s} {len(files)} samples")
     print(f"Imported to {dest}. Use it with: iso split song.mp3 --kit {dest}")
+    return 0
+
+
+def cmd_eval_make(args) -> int:
+    from .evaluate import make_song
+
+    song = make_song(args.kit, args.out, bars=args.bars, bpm=args.bpm, seed=args.seed)
+    print(f"{song}\nground truth in {Path(args.out) / 'truth'}")
+    return 0
+
+
+def cmd_eval_score(args) -> int:
+    from .evaluate import format_score, score
+
+    res = score(args.kit_dir, args.truth)
+    (Path(args.kit_dir) / "score.json").write_text(json.dumps(res, indent=2))
+    print(format_score(res))
     return 0
 
 
@@ -130,6 +168,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dynamics", type=float, default=1.0, help="trigger dynamics: 1 = follow the drummer, 0 = even")
     s.set_defaults(fn=cmd_split)
 
+    m = sub.add_parser("debleed", help="multitrack mode: remove bleed from real drum mic tracks")
+    m.add_argument("--kick", action="append", help="kick mic (repeat for in/out)")
+    m.add_argument("--snare", action="append", help="snare mic (repeat for top/bottom)")
+    m.add_argument("--tom", action="append", help="tom mic; give them high to low")
+    m.add_argument("--hihat", action="append")
+    m.add_argument("--ride", action="append")
+    m.add_argument("--oh", action="append", help="overhead (split into cymbals and shells)")
+    m.add_argument("--room", action="append", help="room mic (passed through, aligned)")
+    m.add_argument("-o", "--out", default=str(DEFAULT_OUT / "multitrack"))
+    m.add_argument("--kit", help="trigger kit folder")
+    m.add_argument("--bpm", type=float, default=120.0, help="tempo for the MIDI file")
+    m.add_argument("--no-gate", action="store_true")
+    m.add_argument("--no-tta", action="store_true")
+    m.set_defaults(fn=cmd_debleed)
+
     b = sub.add_parser("bounce", help="mix a layer kit down using its session.json levels")
     b.add_argument("kit_dir")
     b.add_argument("--with-song", action="store_true")
@@ -148,6 +201,20 @@ def main(argv: list[str] | None = None) -> int:
     ki.add_argument("--dest", help="output folder (default: ~/.cache/iso/kits/<name>, where the UI looks)")
     ki.add_argument("--kits-dir", default=str(Path.home() / ".cache" / "iso" / "kits"))
     ki.set_defaults(fn=cmd_kit_import)
+
+    e = sub.add_parser("eval", help="measure quality on a song with known ground truth")
+    esub = e.add_subparsers(dest="eval_cmd", required=True)
+    em = esub.add_parser("make", help="render a test song + ground truth from a sample kit")
+    em.add_argument("--kit", required=True, help="Iso kit folder (e.g. from `iso kit import`)")
+    em.add_argument("-o", "--out", default="iso_eval")
+    em.add_argument("--bars", type=int, default=16)
+    em.add_argument("--bpm", type=float, default=124.0)
+    em.add_argument("--seed", type=int, default=0)
+    em.set_defaults(fn=cmd_eval_make)
+    es = esub.add_parser("score", help="score a layer kit against the truth folder")
+    es.add_argument("kit_dir")
+    es.add_argument("truth")
+    es.set_defaults(fn=cmd_eval_score)
 
     d = sub.add_parser("doctor", help="check PyTorch / GPU / model setup")
     d.set_defaults(fn=cmd_doctor)

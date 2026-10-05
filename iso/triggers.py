@@ -69,12 +69,26 @@ def _layers_by_loudness(shots: list[OneShot], same_layer_db: float = 1.5) -> lis
     return layers
 
 
+def oneshot_attack(data: np.ndarray, sr: int) -> int:
+    """Attack start of a one-shot sample.
+
+    Nothing comes before the hit in a sample, so the first point where the
+    signal reaches 10% of its peak is a safe anchor even for cymbals, whose
+    peak can arrive 100 ms after the stick. The ratio detector then refines
+    it within a few milliseconds.
+    """
+    m = np.abs(mono(data))
+    if m.max() <= 0:
+        return 0
+    first = int(np.argmax(m >= 0.1 * m.max()))
+    return refine_onset(data, first, sr, back_ms=5, fwd_ms=3)
+
+
 def load_oneshot(path: Path, sr: int) -> OneShot:
     a = load(path, sr=sr, stereo=True)
     peak = float(np.max(np.abs(a.data))) or 1.0
     data = (a.data / peak).astype(np.float32)
-    attack = refine_onset(data, int(np.argmax(np.abs(mono(data)))), sr, back_ms=30, fwd_ms=5)
-    return OneShot(data=data, attack=attack, level_db=20 * np.log10(peak), name=path.name)
+    return OneShot(data=data, attack=oneshot_attack(data, sr), level_db=20 * np.log10(peak), name=path.name)
 
 
 def load_kit_folder(path: str | Path, sr: int) -> Kit:

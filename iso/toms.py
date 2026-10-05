@@ -20,19 +20,31 @@ TOM_NOTES_BY_COUNT = {
 }
 
 
-def hit_pitch(x: np.ndarray, start: int, sr: int, lo_hz: float = 50.0, hi_hz: float = 500.0) -> float:
-    """Strongest partial between lo_hz and hi_hz in the 5-150 ms after the attack."""
+def hit_pitch(x: np.ndarray, start: int, sr: int, lo_hz: float = 45.0, hi_hz: float = 500.0) -> float:
+    """Fundamental of a tom hit: strongest partial in the 5-100 ms after the attack, octave-checked.
+
+    If there's a solid peak an octave below the strongest one, that lower
+    peak is the drum's fundamental and the strong one was an overtone.
+    """
     m = x.mean(axis=0) if x.ndim == 2 else x
-    seg = m[start + int(0.005 * sr) : start + int(0.150 * sr)].astype(np.float64)
+    seg = m[start + int(0.005 * sr) : start + int(0.100 * sr)].astype(np.float64)
     if seg.size < 256:
         return float("nan")
     n = 1 << 15
-    spec = np.abs(np.fft.rfft(seg * np.hanning(seg.size), n))
+    P = np.abs(np.fft.rfft(seg * np.hanning(seg.size), n))
     f = np.fft.rfftfreq(n, 1 / sr)
     band = (f >= lo_hz) & (f <= hi_hz)
-    if not band.any() or spec[band].max() <= 0:
+    if not band.any() or P[band].max() <= 0:
         return float("nan")
-    return float(f[band][np.argmax(spec[band])])
+    best = float(f[band][np.argmax(P[band])])
+    peak = P[band].max()
+    for _ in range(2):
+        half = (f >= max(lo_hz, best / 2 * 0.97)) & (f <= best / 2 * 1.03)
+        if half.any() and P[half].max() >= 0.15 * peak:
+            best = float(f[half][np.argmax(P[half])])
+        else:
+            break
+    return best
 
 
 def cluster_pitches(pitches: list[float], k: int, iters: int = 30) -> tuple[np.ndarray, np.ndarray]:
@@ -62,7 +74,7 @@ def cluster_pitches(pitches: list[float], k: int, iters: int = 30) -> tuple[np.n
     return labels, np.exp(centers[order])
 
 
-def split_toms(stem: np.ndarray, sr: int, hits: list[Hit], max_toms: int = 3, min_gap_semitones: float = 2.0) -> list[int]:
+def split_toms(stem: np.ndarray, sr: int, hits: list[Hit], max_toms: int = 3, min_gap_semitones: float = 1.0) -> list[int]:
     """Tom index per hit (0 = highest). Merges clusters closer than `min_gap_semitones`."""
     if not hits:
         return []
@@ -70,8 +82,8 @@ def split_toms(stem: np.ndarray, sr: int, hits: list[Hit], max_toms: int = 3, mi
     for k in range(max_toms, 0, -1):
         labels, centers = cluster_pitches(pitches, k)
         if len(centers) <= 1:
-            return list(labels)
+            return [int(v) for v in labels]
         gaps = 12 * np.log2(centers[:-1] / centers[1:])
         if np.all(gaps >= min_gap_semitones):
-            return list(labels)
+            return [int(v) for v in labels]
     return [0] * len(hits)
