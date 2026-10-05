@@ -131,6 +131,7 @@ async function openKit(name) {
   $("kitName").textContent = name;
   const hits = Object.entries(kit.report.hits || {}).map(([k, v]) => `${k} ${v}`).join(" · ");
   $("kitInfo").textContent = `${fmt(duration)} · ${kit.report.bpm} BPM · ${hits}`;
+  renderNotes(kit.report);
   const base = `/files/${encodeURIComponent(name)}/`;
   $("dlMidi").href = base + encodeURIComponent(kit.report.midi);
   $("dlMidi").download = kit.report.midi;
@@ -140,6 +141,33 @@ async function openKit(name) {
   renderStrips();
   refreshLibrary(name);
   for (const t of kit.tracks) if (audible(t)) ensureBuffer(t);
+}
+
+// Things worth knowing before you mix: trigger polarity and alignment, QC results.
+function renderNotes(r) {
+  const ul = $("kitNotes");
+  ul.innerHTML = "";
+  const add = (text, cls) => {
+    const li = document.createElement("li");
+    li.textContent = text;
+    if (cls) li.className = cls;
+    ul.appendChild(li);
+  };
+  for (const [p, t] of Object.entries(r.triggers || {})) {
+    const weak = t.hits && (t.aligned < 0.5 * t.hits || (t.polarity_confidence ?? 1) < 0.3);
+    add(
+      `trig_${p}: ${t.aligned}/${t.hits} hits phase-locked, polarity ${t.polarity > 0 ? "normal" : "flipped"}` +
+        (weak ? " — the sample differs a lot from the recorded drum; check by ear" : ""),
+      weak ? "warn" : ""
+    );
+  }
+  if (r.toms_found) add(`${r.toms_found} tom${r.toms_found > 1 ? "s" : ""} told apart by pitch`);
+  if (r.hihat_open) add(`${r.hihat_open} open hi-hat hits (MIDI 46)`);
+  const qc = r.qc || {};
+  if (qc.all_same_length === false || qc.finite === false) add("QC failed: stems differ in length or contain invalid samples", "bad");
+  if (Object.keys(r.realigned_samples || {}).length) add(`Some model outputs were shifted back into alignment: ${JSON.stringify(r.realigned_samples)}`, "warn");
+  if (qc.pieces_residual_below_kit_db !== undefined && qc.pieces_residual_below_kit_db < 20)
+    add(`Pieces miss part of the kit (residual only ${qc.pieces_residual_below_kit_db} dB down); extras/pieces_residual.wav has it`, "warn");
 }
 
 function renderStrips() {

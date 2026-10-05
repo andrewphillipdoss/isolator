@@ -164,6 +164,19 @@ correlation, tom grouping and open/closed hats.
 | Crash | **weak**: 1 of 4 found correctly |
 | Triggers (Big Rusty kit on this song) | kick 53/53 phase-locked, polarity inverted (detected, confidence 1.0); snare 38/53 |
 
+**Real models, `best` setup (with test-time augmentation), second test song (it has open hats), 50 min CPU:**
+
+| | Result |
+|---|---|
+| Drums vs rest | 22.5 dB SDR |
+| Kick | F1 1.00, onset error 1.1 ms |
+| Snare | F1 0.98, error 0.3 ms, velocity r 0.996 |
+| Toms | F1 0.89, **96%** grouped to the right drum |
+| Hi-hat | F1 0.94, **open/closed right 97%** (4/4 open hats found) |
+| Ride | F1 0.94 |
+| Crash | **0/4.** Both kit-piece models file this kit's crash mostly under hi-hat; see weak spots |
+| QC | drums + rest and dry + room reconstruct to −172 / −194 dB; piece residual 35 dB down; no realignment needed |
+
 **Oracle check** (true stems in, to test Iso's own DSP): kick, snare and
 hi-hat F1 1.00 with 0.2–0.9 ms error; crash 1.00; toms 0.84 (fast 32nd-note
 fills); open/closed hats 100%.
@@ -178,7 +191,10 @@ Bugs this harness caught and fixed:
 - trigger stems 10 dB too loud for the default faders.
 
 **Known weak spots:**
-- Crash detection is unreliable.
+- **Crash.** On the test kit, both public kit-piece models put the crash
+  mostly into the hi-hat stem (correlation with the true crash 0.53 / 0.42),
+  and the 6-stem model's own crash stem is 20 dB too quiet. Until the ADTOF
+  transcription pass (§7.2) lands, take cymbals from the dry-kit layer.
 - The room stem is under-extracted (≈10 dB quieter than the true room on the
   test song). Neither a second dereverb pass nor WPE beat a single MDX23C
   pass.
