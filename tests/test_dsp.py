@@ -158,3 +158,17 @@ def test_oneshot_attack_at_sample_zero_is_found(tmp_path):
         sf.write(tmp_path / f"k{pre}.wav", np.stack([x, x]).T, SR)
         shot = load_oneshot(tmp_path / f"k{pre}.wav", SR)
         assert abs(shot.attack - pre) <= 2, (pre, shot.attack)
+
+
+def test_realign_fixes_a_shifted_stem_and_leaves_aligned_ones_alone():
+    from iso.layers import realign
+
+    x = kick_stem()
+    for shift in (0, 3, -7):
+        est = np.roll(x, shift, axis=1)
+        fixed, lag = realign(x, est)
+        assert lag == shift
+        np.testing.assert_allclose(fixed[:, 100:-100], x[:, 100:-100], atol=1e-6)
+    rng = np.random.default_rng(0)
+    noise = rng.standard_normal(x.shape).astype(np.float32) * 1e-4
+    assert realign(x, noise)[1] == 0  # unrelated content is never shifted

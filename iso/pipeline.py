@@ -22,10 +22,11 @@ from typing import Callable
 import numpy as np
 
 from . import __version__
+from .articulation import hat_open
 from .audio import Audio, load, resample, save
 from .ensemble import combine, split_by_guides
 from .gate import PIECE_GATES, hit_gate
-from .layers import default_session, save_session, split_room, write_reaper_project
+from .layers import default_session, realign, save_session, split_room, write_reaper_project
 from .midi import write_midi
 from .onsets import PIECE_PARAMS, DetectParams, Hit, detect_hits, drop_buried, drop_cross_leakage
 from .separation import MODEL_SR, Backend, pick_stem
@@ -138,6 +139,13 @@ def _separate_pieces(backend: Backend, x: np.ndarray, cfg: Config, sr: int) -> d
     return out
 
 
+def _guard(ref: np.ndarray, est: np.ndarray, name: str, lags: dict) -> tuple[np.ndarray, dict]:
+    est, lag = realign(ref, est)
+    if lag:
+        lags = {**lags, name: lag}
+    return est, lags
+
+
 def run(
     input_path: str | Path,
     out_dir: str | Path,
@@ -165,12 +173,15 @@ def run(
         "avg_wave",
         cfg.drum_weights,
     )
+    drums_full, first_lag = _guard(mix.data, drums_full, "drums_full", {})
     stems["drums_full"] = drums_full
     stems["no_drums"] = (mix.data - drums_full).astype(np.float32)
 
+    lags: dict = dict(first_lag)
     if cfg.dereverb_model:
         progress("Splitting dry kit and room", 0.35)
         dry = pick_stem(backend.separate(drums_full, sr, cfg.dereverb_model), "dry", cfg.dereverb_model)
+        dry, lags = _guard(drums_full, dry, "drums_dry", lags)
         stems["drums_dry"] = dry
         stems["room"] = split_room(drums_full, dry)
     else:
@@ -179,6 +190,8 @@ def run(
     progress("Splitting kit pieces", 0.55)
     piece_src = dry if cfg.pieces_from == "dry" else drums_full
     raw_pieces = _separate_pieces(backend, piece_src, cfg, sr)
+    for p in list(raw_pieces):
+        raw_pieces[p], lags = _guard(piece_src, raw_pieces[p], p, lags)
 
     progress("Finding hits", 0.75)
     hits: dict[str, list[Hit]] = {
@@ -231,7 +244,11 @@ def run(
     all_times = sorted(h.sample / sr for p in ("kick", "snare", "hihat") for h in hits.get(p, []))
     bpm = cfg.bpm or estimate_bpm(all_times)
     midi_name = f"drums_{bpm:g}bpm.mid"
-    midi_hits = {p: hs for p, hs in hits.items() if p != "toms"}
+    midi_hits = {p: hs for p, hs in hits.items() if p not in ("toms", "hihat")}
+    if hits.get("hihat"):
+        opened = hat_open(raw_pieces["hihat"], sr, hits["hihat"])
+        midi_hits["hihat"] = [h for h, o in zip(hits["hihat"], opened) if not o]
+        midi_hits["hihat_open"] = [h for h, o in zip(hits["hihat"], opened) if o]
     if tom_idx:
         names = TOM_NOTES_BY_COUNT[max(tom_idx) + 1]
         for h, i in zip(hits["toms"], tom_idx):
@@ -252,6 +269,8 @@ def run(
         "midi": midi_name,
         "hits": {p: len(h) for p, h in hits.items()},
         "toms_found": (max(tom_idx) + 1) if tom_idx else 0,
+        "hihat_open": len(midi_hits.get("hihat_open", [])),
+        "realigned_samples": lags,  # should stay empty; non-zero means a model output was shifted
         "triggers": trigger_reports,
         "files": files,
         "elapsed_s": round(time.time() - t0, 1),

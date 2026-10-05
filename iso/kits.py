@@ -59,8 +59,11 @@ def import_hydrogen(kit_dir: str | Path, out_dir: str | Path) -> dict[str, list[
         if piece is None:
             continue
         low = name.lower()
-        if piece == "hihat" and not re.search(r"clos", low):
-            continue
+        if piece == "hihat":
+            if re.search(r"open", low) and not re.search(r"semi|half", low):
+                piece = "hihat_open"  # kept apart; used for the test song, not layered by default
+            elif not re.search(r"clos", low):
+                continue
         if piece == "ride" and "bell" in low:
             continue
         files = [el.text.strip() for el in inst.iter("filename") if el.text]

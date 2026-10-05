@@ -136,6 +136,7 @@ def test_layer_kit_end_to_end(tmp_path):
     names = {t.name: t for t in tracks}
     assert ssr == SR and names["drums_full"].muted and not names["drums_dry"].muted
     assert (out / "layer_kit.rpp").read_text().count("<TRACK") >= len(tracks)
+    assert rep["realigned_samples"] == {}
     assert json.loads((out / "report.json").read_text())["files"] == rep["files"]
 
 

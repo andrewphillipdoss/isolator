@@ -37,6 +37,7 @@ class Note:
     t: float  # seconds
     vel: int
     tom: int = 0  # 0 = highest tom
+    open: bool = False  # open hi-hat
 
 
 def groove(bars: int, bpm: float, rng: np.random.Generator) -> list[Note]:
@@ -61,11 +62,13 @@ def groove(bars: int, bpm: float, rng: np.random.Generator) -> list[Note]:
             if rng.random() < 0.45 and not (fill and s >= 12):
                 notes.append(Note("snare", t0 + s * six, int(rng.integers(22, 38))))
         cym = "ride" if chorus else "hihat"
+        open_step = 14 if (cym == "hihat" and not fill and rng.random() < 0.5) else None
         for s in range(0, 16, 2):
             if fill and s >= 12:
                 continue
             accent = s % 4 == 0
-            notes.append(Note(cym, t0 + s * six, int(rng.integers(85, 105) if accent else rng.integers(55, 75))))
+            vel = int(rng.integers(85, 105) if accent else rng.integers(55, 75))
+            notes.append(Note(cym, t0 + s * six, vel, open=(s == open_step)))
         if fill:
             for i, s in enumerate(range(12, 16)):
                 tom = min(2, i * 3 // 4)
@@ -150,7 +153,7 @@ def make_song(kit_dir: str | Path, out_dir: str | Path, bars: int = 16, bpm: flo
     stems = {p: np.zeros((2, n), dtype=np.float32) for p in PIECES}
     rr = 0
     for note in notes:
-        kp = kit.pieces[note.piece]
+        kp = kit.pieces["hihat_open"] if note.open and "hihat_open" in kit.pieces else kit.pieces[note.piece]
         if note.piece == "toms" and kp.variants:
             kp = kp.variants[min(note.tom, len(kp.variants) - 1)]
         shot, _ = kp.pick(note.vel, rr)
@@ -176,7 +179,7 @@ def make_song(kit_dir: str | Path, out_dir: str | Path, bars: int = 16, bpm: flo
     for name, x in {**stems, "drums_dry": dry, "room": room, "drums_full": full, "no_drums": band}.items():
         save(truth / f"{name}.wav", Audio((x * scale).astype(np.float32), SR))
     save(out / "song.wav", Audio((mix * scale).astype(np.float32), SR))
-    notes_json = [{"piece": x.piece, "t": round(x.t, 6), "vel": x.vel, "tom": x.tom} for x in notes]
+    notes_json = [{"piece": x.piece, "t": round(x.t, 6), "vel": x.vel, "tom": x.tom, "open": x.open} for x in notes]
     (truth / "notes.json").write_text(json.dumps({"bpm": bpm, "notes": notes_json}, indent=1))
     return out / "song.wav"
 
@@ -238,7 +241,7 @@ def score(kit_dir: str | Path, truth_dir: str | Path) -> dict:
 
     note_piece = {}
     for k, v in GM_NOTES.items():
-        note_piece.setdefault(v, "toms" if k.startswith("tom") else k)
+        note_piece.setdefault(v, "toms" if k.startswith("tom") else "hihat" if k.startswith("hihat") else k)
     est_hits: dict[str, list[tuple[float, int, int]]] = {}
     t = 0.0
     for msg in mf:
@@ -265,6 +268,9 @@ def score(kit_dir: str | Path, truth_dir: str | Path) -> dict:
             "onset_err_ms_median": round(float(np.median(errs)), 2) if errs else None,
             "velocity_r": round(vel_r, 3) if np.isfinite(vel_r) else None,
         }
+        if p == "hihat" and pairs and any(x.get("open") for x in tn):
+            row["open_hat_acc"] = round(sum(1 for i, j in pairs if (eh[j][2] == 46) == bool(tn[i].get("open"))) / len(pairs), 3)
+            row["open_hats"] = f"{sum(1 for i, j in pairs if eh[j][2] == 46 and tn[i].get('open'))}/{sum(1 for x in tn if x.get('open'))} found"
         if p == "toms" and pairs:
             # Higher GM tom note = higher tom; compare the rank order with the truth.
             order = {48: 0, 50: 0, 45: 1, 47: 1, 41: 2, 43: 2}
@@ -284,6 +290,8 @@ def format_score(res: dict) -> str:
     lines.append("Hits (F1 / onset error / velocity r)")
     for p, r in res["hits"].items():
         extra = f"  toms grouped right {r['tom_grouping_acc']:.0%}" if "tom_grouping_acc" in r else ""
+        if "open_hat_acc" in r:
+            extra += f"  open/closed right {r['open_hat_acc']:.0%} (open {r['open_hats']})"
         lines.append(
             f"  {p:6s} F1 {r['f1']:.2f}  P {r['precision']:.2f} R {r['recall']:.2f}  "
             f"({r['found']}/{r['true']})  err {r['onset_err_ms_median']} ms  vel r {r['velocity_r']}{extra}"

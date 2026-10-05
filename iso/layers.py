@@ -18,6 +18,43 @@ import numpy as np
 from .audio import Audio, db_to_gain, load, save
 
 
+def lag_of(ref: np.ndarray, est: np.ndarray, max_lag: int = 64) -> int:
+    """Samples `est` is late (+) or early (-) relative to `ref`, by cross-correlation (FFT)."""
+    a = ref.mean(axis=0) if ref.ndim == 2 else ref
+    b = est.mean(axis=0) if est.ndim == 2 else est
+    # First differences whiten the signals, so even a low kick gives a peak
+    # about one sample wide instead of a broad hump.
+    a, b = np.diff(a.astype(np.float64)), np.diff(b.astype(np.float64))
+    n = 1 << int(np.ceil(np.log2(len(a) + len(b))))
+    c = np.fft.irfft(np.fft.rfft(b, n) * np.conj(np.fft.rfft(a, n)), n)
+    lags = np.concatenate([c[: max_lag + 1], c[-max_lag:]])
+    k = int(np.argmax(lags))
+    norm = np.sqrt(np.dot(a, a) * np.dot(b, b)) + 1e-20
+    # Only move when the evidence is strong and clearly beats zero lag; a
+    # near-empty stem (an unplayed ride, say) correlates by noise alone.
+    if lags[k] / norm < 0.3 or lags[k] < 1.2 * max(lags[0], 0.0):
+        return 0
+    return k if k <= max_lag else k - len(lags)
+
+
+def realign(ref: np.ndarray, est: np.ndarray, max_lag: int = 64) -> tuple[np.ndarray, int]:
+    """Shift `est` so it lines up with `ref` to the sample.
+
+    Every model Iso ships is sample-aligned, so this should always find 0.
+    It's a guard: a single sample of offset between dry and full would
+    smear every transient into the room stem.
+    """
+    lag = lag_of(ref, est, max_lag)
+    if lag == 0:
+        return est, 0
+    out = np.zeros_like(est)
+    if lag > 0:
+        out[:, :-lag] = est[:, lag:]
+    else:
+        out[:, -lag:] = est[:, :lag]
+    return out, lag
+
+
 def split_room(full: np.ndarray, dry: np.ndarray) -> np.ndarray:
     """Room is whatever the dereverb took out, so dry + room == full exactly."""
     if full.shape != dry.shape:
