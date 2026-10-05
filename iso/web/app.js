@@ -26,6 +26,7 @@ let startAt = 0; // ctx time when playback (re)started
 let startOffset = 0; // song position at startAt
 let duration = 0;
 let saveTimer = null;
+let generation = 0; // bumps on every kit switch so late-arriving stems of the old kit are ignored
 
 function audio() {
   if (!ctx) {
@@ -38,7 +39,8 @@ function audio() {
   return ctx;
 }
 
-const position = () => (playing ? startOffset + (ctx.currentTime - startAt) : startOffset);
+// Clamped: during the 100 ms lead-in after Play, currentTime is still before startAt.
+const position = () => (playing ? Math.max(0, startOffset + (ctx.currentTime - startAt)) : startOffset);
 const anySolo = () => kit.tracks.some((t) => t.solo);
 const audible = (t) => !t.muted && (!anySolo() || t.solo);
 
@@ -119,6 +121,7 @@ async function pollJob(id) {
 // ---------- mixer ----------
 async function openKit(name) {
   stop();
+  generation++;
   buffers.clear();
   loading.clear();
   gains.clear();
@@ -135,8 +138,6 @@ async function openKit(name) {
   const base = `/files/${encodeURIComponent(name)}/`;
   $("dlMidi").href = base + encodeURIComponent(kit.report.midi);
   $("dlMidi").download = kit.report.midi;
-  $("dlRpp").href = base + "layer_kit.rpp";
-  $("dlRpp").download = `${name}.rpp`;
   $("dlZip").href = `/api/kits/${encodeURIComponent(name)}/zip`;
   renderStrips();
   refreshLibrary(name);
@@ -233,11 +234,17 @@ function applyGains() {
 function ensureBuffer(t) {
   if (buffers.has(t.name)) return Promise.resolve(buffers.get(t.name));
   if (!loading.has(t.name)) {
+    const gen = generation;
     const url = `/files/${encodeURIComponent(kit.name)}/${encodeURIComponent(t.file)}`;
     const p = fetch(url)
       .then((r) => r.arrayBuffer())
       .then((ab) => audio().decodeAudioData(ab))
-      .then((buf) => { buffers.set(t.name, buf); drawWave(t); return buf; });
+      .then((buf) => {
+        if (gen !== generation) return null; // the user opened another song meanwhile
+        buffers.set(t.name, buf);
+        drawWave(t);
+        return buf;
+      });
     loading.set(t.name, p);
   }
   return loading.get(t.name);
@@ -283,6 +290,7 @@ function startSource(t, when, offset) {
 
 // A track that finishes loading mid-playback joins on the shared clock, so it lands sample-locked.
 function joinLate(t) {
+  if (!playing || !buffers.has(t.name)) return;
   const when = ctx.currentTime + 0.05;
   startSource(t, when, startOffset + (when - startAt));
 }

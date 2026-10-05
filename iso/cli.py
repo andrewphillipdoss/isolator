@@ -34,10 +34,27 @@ def cmd_split(args) -> int:
         tta=cfg.tta and not args.no_tta,
         gate_floor_db=args.gate_floor,
     )
+    if args.drums:
+        from .models import MODELS
+
+        names = [m.strip() for m in args.drums.split(",") if m.strip()]
+        unknown = [m for m in names if m not in MODELS]
+        if unknown:
+            print(f"unknown drum model(s) {unknown}; known: {', '.join(MODELS)}", file=sys.stderr)
+            return 1
+        cfg = replace(cfg, drum_models=names, drum_weights=None)
+    if args.kit and not Path(args.kit).is_dir():
+        print(f"trigger kit folder not found: {args.kit}", file=sys.stderr)
+        return 1
     backend = make_backend(args.models_dir, cfg.tta, cfg.overlap, args.cpu)
+    used: set[str] = set()
     for song in args.songs:
         song = Path(song)
-        out = Path(args.out) / song.stem
+        title, i = song.stem, 2
+        while title in used:  # two "take1.wav" from different folders in one batch
+            title, i = f"{song.stem} ({i})", i + 1
+        used.add(title)
+        out = Path(args.out) / title
         print(f"\n{song.name} -> {out}/")
         report = run(song, out, backend, cfg, progress=lambda m, f: print(f"  [{f:4.0%}] {m}", flush=True))
         hits = ", ".join(f"{k} {v}" for k, v in report["hits"].items())
@@ -92,7 +109,9 @@ def cmd_serve(args) -> int:
         host=args.host,
         port=args.port,
         out_root=Path(args.out),
-        backend_factory=lambda cfg: make_backend(args.models_dir, cfg.tta, cfg.overlap, args.cpu),
+        backend_factory=lambda cfg: make_backend(
+            args.models_dir, cfg.tta, args.overlap if args.overlap is not None else cfg.overlap, args.cpu
+        ),
         token=args.token,
     )
     return 0
@@ -204,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-gate", action="store_true", help="skip hit-keyed gating of kick/snare/toms")
     s.add_argument("--gate-floor", type=float, default=-30.0, help="dB between hits on gated pieces (-60 = cleanest, -12 = gentle)")
     s.add_argument("--pieces-from", choices=["dry", "full"], help="split pieces from the dry kit or the full kit")
+    s.add_argument("--drums", help="drum model(s) to use instead of the preset's, comma-separated (e.g. htdemucs_ft_drums for a fast CPU run)")
     s.add_argument("--bpm", type=float, help="tempo for the MIDI file (default: estimated)")
     s.add_argument("--dynamics", type=float, default=1.0, help="trigger dynamics: 1 = follow the drummer, 0 = even")
     s.set_defaults(fn=cmd_split)

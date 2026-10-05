@@ -192,3 +192,55 @@ def test_ui_token_guard(tmp_path):
     assert c.get("/api/kits").status_code == 401
     assert c.get("/api/kits?token=s3cret").status_code == 200
     assert c.get("/api/kits").status_code == 200  # cookie set by the first good request
+
+
+def test_server_names_cannot_escape_and_never_collide(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from iso.server import clean_title, create_app, hostname, unique_title
+
+    assert clean_title("..") == "song" and clean_title("...") == "song" and clean_title("../../etc") == "etc"
+    (tmp_path / "Song").mkdir()
+    assert unique_title(tmp_path, "Song", set()) == "Song (2)"
+    assert hostname("[::1]:8765") == "[::1]" and hostname("127.0.0.1:80") == "127.0.0.1"
+
+    out = tmp_path / "o"
+    c = TestClient(create_app(out, lambda cfg: None))
+    assert c.get("/api/kits/..").status_code == 404
+    assert c.get("/api/kits/%2e%2e").status_code == 404
+    assert c.get("/api/kits", headers={"host": "evil.example:8765"}).status_code == 403  # DNS rebinding guard
+    # A kit with ordinary punctuation in its title opens fine.
+    from iso.layers import default_session, save_session
+
+    d = out / "Don't Stop, Ever!"
+    d.mkdir(parents=True)
+    save_session(d / "session.json", default_session({"kick": "01_kick.wav"}), 44100)
+    (d / "report.json").write_text('{"seconds": 1.0, "midi": "x.mid", "bpm": 120}')
+    assert c.get("/api/kits/Don't Stop, Ever!").status_code == 200
+    z = c.get("/api/kits/Don't Stop, Ever!/zip")
+    assert z.status_code == 200 and z.content[:2] == b"PK"
+
+
+def test_48k_song_gets_exact_length_files_and_untouched_mix_ref(tmp_path):
+    from iso.audio import resample
+
+    _, mix = make_song(tmp_path)
+    mix48 = resample(mix, SR, 48000)[:, :-1]  # an odd length on purpose
+    p = tmp_path / "song48.wav"
+    sf.write(p, mix48.T, 48000, subtype="FLOAT")
+
+    class Scaled:  # any backend output that is linear in the input is fine here
+        def separate(self, x, sr, model):
+            if model == "bs_roformer_sw":
+                return {"drums": 0.5 * x}
+            if model == "dereverb_mdx23c":
+                return {"dry": 0.8 * x}
+            return {"kick": 0.4 * x, "snare": 0.3 * x, "toms": 0.1 * x, "hh": 0.1 * x, "ride": 0.05 * x, "crash": 0.05 * x}
+
+    rep = run(p, tmp_path / "out", Scaled(), Config(piece_models=["drumsep_6"]))
+    assert rep["output_sr"] == 48000
+    for f in rep["files"].values():
+        x, sr = read(tmp_path / "out" / f)
+        assert sr == 48000 and x.shape[1] == mix48.shape[1], (f, x.shape)
+    ref, _ = read(tmp_path / "out" / rep["files"]["mix_ref"])
+    np.testing.assert_array_equal(ref, mix48)  # the decoded song itself, not a 44.1k round trip

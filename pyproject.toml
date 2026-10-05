@@ -26,7 +26,7 @@ ui = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 # Importing SFZ sample kits (sfizz, BSD-2).
 sfz = ["pysfizz>=0.1"]
 all = ["iso[models,ui,sfz]"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27", "iso[ui]"]
 
 [project.scripts]
 iso = "iso.cli:main"

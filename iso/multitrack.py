@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .audio import Audio, load, resample, save
+from .audio import Audio, fit_length, load, resample, save
 from .gate import PIECE_GATES, hit_gate
 from .midi import write_midi
 from .onsets import PIECE_PARAMS, DetectParams, detect_hits, drop_buried
@@ -73,12 +73,15 @@ def run_multitrack(mics: list[Mic], out_dir: str | Path, backend: Backend, cfg: 
 
         def put(name: str, y: np.ndarray) -> str:
             rel = f"{label}_{name}.wav"
-            save(out / rel, Audio(resample(y, sr, src_sr)[:, :n_src], src_sr))
+            save(out / rel, Audio(fit_length(resample(y, sr, src_sr), n_src), src_sr))
             return rel
 
         entry = {"role": m.role, "source": str(m.path), "files": {}}
         if m.role == "room":
-            entry["files"]["as_recorded"] = put("room", x)
+            # Untouched: written at its own rate, no round trip through 44.1 kHz.
+            rel = f"{label}_room.wav"
+            save(out / rel, a)
+            entry["files"]["as_recorded"] = rel
         elif m.role == "oh":
             stems = backend.separate(x, sr, cfg.piece_model)
             cym = sum(pick_stem(stems, p, cfg.piece_model) for p in ("hihat", "ride", "crash"))

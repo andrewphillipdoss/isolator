@@ -23,7 +23,7 @@ import numpy as np
 
 from . import __version__
 from .articulation import hat_open
-from .audio import Audio, load, resample, save
+from .audio import Audio, fit_length, load, resample, save
 from .ensemble import combine, split_by_guides
 from .gate import PIECE_GATES, hit_gate
 from .layers import default_session, realign, save_session, split_room, write_reaper_project
@@ -185,11 +185,23 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
     (out / "extras").mkdir(exist_ok=True)
 
-    src = load(input_path)
     sr = MODEL_SR
+    # Load the trigger kit first: a bad path should fail in a second, not
+    # after half an hour of separation.
+    kit = load_kit_folder(cfg.kit, sr) if cfg.kit else None
+    if kit is not None and not kit.pieces:
+        raise ValueError(f"trigger kit {cfg.kit} has no piece folders (kick/, snare/, ...)")
+
+    src = load(input_path)
     mix = Audio(resample(src.data, src.sr, sr), sr)
     out_sr = cfg.output_sr or src.sr
     n = mix.samples
+    # Every file gets exactly the song's length at the output rate.
+    n_out = src.samples if out_sr == src.sr else int(round(src.samples * out_sr / src.sr))
+
+    def to_out(x: np.ndarray) -> Audio:
+        return Audio(fit_length(resample(x, sr, out_sr), n_out), out_sr)
+
     stems: dict[str, np.ndarray] = {}
 
     progress("Isolating drums", 0.05)
@@ -205,7 +217,7 @@ def run(
     # The decoded song every stem was derived from. Line things up against
     # this, never against the original MP3: decoders pad MP3s differently
     # (up to 1105 samples).
-    stems["mix_ref"] = mix.data
+    # (written separately below at the source rate, untouched by resampling)
 
     lags: dict = dict(first_lag)
     if cfg.dereverb_model:
@@ -232,20 +244,19 @@ def run(
         hits = drop_cross_leakage(hits, sr)
 
     for p, x in raw_pieces.items():
-        save(out / "extras" / f"raw_{p}.wav", Audio(resample(x, sr, out_sr), out_sr))
+        save(out / "extras" / f"raw_{p}.wav", to_out(x))
         if cfg.gate and p in PIECE_GATES:
             gp = replace(PIECE_GATES[p], floor_db=cfg.gate_floor_db)
             stems[p] = hit_gate(x, sr, [h.sample for h in hits[p]], gp)
         else:
             stems[p] = x
     residual = piece_src - sum(raw_pieces.values())
-    save(out / "extras" / "pieces_residual.wav", Audio(resample(residual, sr, out_sr), out_sr))
+    save(out / "extras" / "pieces_residual.wav", to_out(residual))
 
     tom_idx = split_toms(raw_pieces["toms"], sr, hits["toms"]) if hits.get("toms") else []
     trigger_reports = {}
-    if cfg.kit:
+    if kit is not None:
         progress("Rendering trigger layers", 0.85)
-        kit = load_kit_folder(cfg.kit, sr)
         for p in cfg.trigger_pieces:
             if p in kit.pieces and p in raw_pieces and hits.get(p):
                 track, rep = render_triggers(
@@ -270,8 +281,11 @@ def run(
     files: dict[str, str] = {}
     for name, x in stems.items():
         rel = f"{FILE_NAMES.get(name, name)}.wav"
-        save(out / rel, Audio(resample(x, sr, out_sr), out_sr))
+        save(out / rel, to_out(x))
         files[name] = rel
+    mix_ref = src.data if out_sr == src.sr else resample(src.data, src.sr, out_sr)
+    files["mix_ref"] = "00_mix_ref.wav"
+    save(out / files["mix_ref"], Audio(fit_length(mix_ref, n_out), out_sr))
 
     all_times = sorted(h.sample / sr for p in ("kick", "snare", "hihat") for h in hits.get(p, []))
     bpm = cfg.bpm or estimate_bpm(all_times)
